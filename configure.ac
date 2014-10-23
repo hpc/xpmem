@@ -3,10 +3,11 @@
 
 AC_PREREQ(2.59)
 AC_INIT([cray-xpmem], [0.1], [http://bugzilla.us.cray.com])
-AM_INIT_AUTOMAKE([-Wall -Werror])
+AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 AC_CONFIG_SRCDIR([include/xpmem.h])
 AC_CONFIG_MACRO_DIR([m4])
 AM_CONFIG_HEADER([config.h])
+AM_SILENT_RULES
 
 # Checks for programs.
 AC_PROG_CC
@@ -63,6 +64,8 @@ AC_ARG_WITH([module],
   [AC_SUBST([MODULE_PATH], $withval)
    AC_SUBST([MODULE_VERSION], [`basename $withval`])],
   [AC_MSG_ERROR([Module path must be specified])])
+
+AC_PATH_KERNEL_SOURCE
 
 AC_CONFIG_FILES([Makefile
                  cray-xpmem.pc
