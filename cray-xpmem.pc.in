@@ -1,0 +1,15 @@
+
+includedir=@includedir@
+libdir=@libdir@
+
+default_bindir=@default_bindir@
+default_fomdir=@default_fomdir@
+default_prefix=@default_prefix@
+default_shlibdir=@default_shlibdir@
+
+Cflags: -I${includedir}
+Description: XPMEM
+Libs: -L${libdir} -lxpmem
+Name: @PACKAGE_NAME@
+Version: @PACKAGE_VERSION@
+

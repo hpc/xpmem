@@ -1,0 +1,12 @@
+#%Module
+#
+# cray-xpmem module
+#
+
+prepend-path LD_LIBRARY_PATH @libdir@
+prepend-path PATH @bindir@
+prepend-path PKG_CONFIG_PATH @pkgconfigdir@
+prepend-path PE_PRODUCT_LIST CRAY_XPMEM
+
+setenv  CRAY_XPMEM_INCLUDE_OPTS "\$(pkg-config cray-xpmem --cflags)"
+setenv  CRAY_XPMEM_POST_LINK_OPTS "\$(pkg-config cray-xpmem --libs-only-L) -Wl,-rpath=@libdir@"

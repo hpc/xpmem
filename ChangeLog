@@ -1,0 +1,10 @@
+2014-10-23: v2.3
+* Added support for kernel 3.12 and newer. No longer supports kernel 2.6.32.
+* No longer makes use of symbols not exported by default in 3.x. This
+  includes using vm_munmap over do_munmap, zap_vma_ptes over zap_page_range,
+  etc. More testing is needed to ensure these replacements are approriate.
+  See associated comments.
+* Use bash for the test run.sh. The shell is available on all Linux systems
+  (ksh is not).
+* Rewrite the page table walk code to only walk the page tables once.
+* Add support for transparent huge pages.

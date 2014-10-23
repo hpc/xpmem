@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+#
+### BEGIN INIT INFO
+# Provides:          xpmem
+# Required-Start:
+# X-UnitedLinux-Should-Start:
+# Required-Stop:
+# Default-Start:     3
+# Default-Stop:      0 1 2 5 6
+# Description:       Start XPMEM
+### END INIT INFO
+PATH=/bin:/usr/bin:/usr/sbin:/sbin
+
+case "$1" in
+    start)
+	echo "Loading XPMEM driver"
+	if ! cat /proc/modules | grep -q "^xpmem" >/dev/null 2>&1; then
+	    modprobe xpmem
+	fi
+	;;
+    stop)
+	echo "Unloading XPMEM driver"
+	modprobe -r xpmem
+	;;
+    restart)
+        $0 stop
+        $0 start
+        ;;
+    *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+	;;
+esac
