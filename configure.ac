@@ -5,14 +5,15 @@ AC_PREREQ(2.59)
 AC_INIT([cray-xpmem], [0.1], [http://bugzilla.us.cray.com])
 AM_INIT_AUTOMAKE([-Wall -Werror])
 AC_CONFIG_SRCDIR([include/xpmem.h])
+AC_CONFIG_MACRO_DIR([m4])
 AM_CONFIG_HEADER([config.h])
 
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_INSTALL
+AM_PROG_AR
 AM_PROG_LIBTOOL
 AC_PROG_LN_S
-AM_PROG_AR
 
 # Checks for libraries.
 
