@@ -1,9 +1,9 @@
 /*
  * XPMEM mmu notifier related operations and callback function definitions.
  *
- * Copyright (c) 2010 Cray, Inc.
- * Copyright (c) 2014 Los Alamos National Security, LLC. All rights
- *                    reserved.
+ * Copyright (c) 2010,2012 Cray, Inc.
+ * Copyright (c) 2014-2015 Los Alamos National Security, LLC. All rights
+ *                         reserved.
  *
  * This file is subject to the terms and conditions of the GNU General Public
  * License. See the file "COPYING" in the main directory of this archive for
@@ -38,7 +38,20 @@ xpmem_invalidate_PTEs_range(struct xpmem_thread_group *seg_tg,
 
 			if (start <= seg_end && end >= seg_start) {
 				XPMEM_DEBUG("start=%lx, end=%lx", start, end);
+				xpmem_seg_ref(seg);
+				read_unlock(&seg_tg->seg_list_lock);
+
 				xpmem_clear_PTEs_range(seg, start, end, 1);
+
+				read_lock(&seg_tg->seg_list_lock);
+				if (list_empty(&seg->seg_list)) {
+					/* seg was deleted from seg_tg->seg_list */
+					xpmem_seg_deref(seg);
+					seg = list_entry(&seg_tg->seg_list,
+							 struct xpmem_segment,
+							 seg_list);
+				} else
+					xpmem_seg_deref(seg);
 			}
 		}
 	}
@@ -122,12 +135,72 @@ static void
 xpmem_invalidate_page(struct mmu_notifier *mn, struct mm_struct *mm,
 		      unsigned long start)
 {
+	if (offset_in_page(start) != 0)
+		start -= offset_in_page(start);
 	xpmem_invalidate_range(mn, mm, start, start + PAGE_SIZE);
+}
+
+/*
+ * MMU notifier callout for releasing a mm_struct.  Remove all traces of
+ * XPMEM from the address space, using the same logic that would apply if
+ * /dev/xpmem was closed.
+ */
+static void
+xpmem_mmu_release(struct mmu_notifier *mn, struct mm_struct *mm)
+{
+	struct xpmem_thread_group *tg;
+	int i;
+
+	/*
+	 * Some other process may be the last to release the mm, so
+	 * validate it against the value stored in the tg before continuing.
+	 */
+	tg = xpmem_tg_ref_by_tgid(current->tgid);
+	if (!IS_ERR(tg)) {
+		if (tg->mm == mm) {
+			/*
+			 * Normal case, process is removing its own address
+			 * space.
+			 */
+			XPMEM_DEBUG("self: tg->mm=%p", tg->mm);
+			xpmem_teardown(tg);
+			return;
+		} else {
+			/* Abnormal case, must continue with code below. */
+			xpmem_tg_deref(tg);
+		}
+	}
+
+	/*
+	 * Although it is highly unlikely, an "outside" process could have
+	 * obtained a reference to the mm_struct and been the last to call
+	 * mmput().  In this case we need to search all of the tgs to see
+	 * if one still matches with the mm passed to us from the MMU notifier
+	 * release callout.  If a match is found, that means the mmput()
+	 * occurred before the owning process has closed /dev/xpmem and
+	 * we need to call xpmem_teardown() on behalf of the owning process
+	 * since the mm_struct mappings are being destroyed.
+	 */
+	for (i = 0; i < XPMEM_TG_HASHTABLE_SIZE; i++) {
+		read_lock(&xpmem_my_part->tg_hashtable[i].lock);
+		list_for_each_entry(tg, &xpmem_my_part->tg_hashtable[i].list,
+				    tg_hashlist) {
+			if (tg->mm == mm) {
+				xpmem_tg_ref(tg);
+				read_unlock(&xpmem_my_part->tg_hashtable[i].lock);
+				XPMEM_DEBUG("not self: tg->mm=%p", tg->mm);
+				xpmem_teardown(tg);
+				return;
+			}
+		}
+		read_unlock(&xpmem_my_part->tg_hashtable[i].lock);
+	}
 }
 
 static const struct mmu_notifier_ops xpmem_mmuops = {
 	.invalidate_page	= xpmem_invalidate_page,
 	.invalidate_range_end	= xpmem_invalidate_range,
+	.release		= xpmem_mmu_release,
 };
 
 /*

@@ -4,7 +4,8 @@
  * for more details.
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
- * Copyright (c) 2014      Los Alamos National Security, LLC. All rights
+ * Copyright 2010,2012 Cray Inc. All Rights Reserved
+ * Copyright (c) 2014-2015 Los Alamos National Security, LLC. All rights
  *                         reserved.
  */
 
@@ -18,6 +19,24 @@
 #include <linux/file.h>
 #include <xpmem.h>
 #include "xpmem_private.h"
+
+static void
+xpmem_open_handler(struct vm_area_struct *vma)
+{
+	struct xpmem_attachment *att;
+
+	att = (struct xpmem_attachment *)vma->vm_private_data;
+
+	/*
+	 * If the new vma is a copy of a vma that has an XPMEM attachment we don't
+	 * want the new vma to be associated with the same attachment. This
+	 * shouldn't happen in any normal use of XPMEM, but it can happen if the
+	 * user calls mremap().
+	 */
+
+	if (att && att->at_vma != vma)
+		vma->vm_private_data = NULL;
+}
 
 /*
  * This function is called whenever a XPMEM address segment is unmapped.
@@ -128,25 +147,23 @@ out:
 	xpmem_att_deref(att);
 
 	/* cause the demise of the current thread group */
-	printk("xpmem_close_handler: unexpected unmap of XPMEM segment at "
+	XPMEM_DEBUG("xpmem_close_handler: unexpected unmap of XPMEM segment at "
 	       "[0x%lx - 0x%lx]\n", vma->vm_start, vma->vm_end);
-	sigaddset(&current->pending.signal, SIGKILL);
-	set_tsk_thread_flag(current, TIF_SIGPENDING);
+	force_sig(SIGKILL, current);
 }
 
 static int
 xpmem_fault_handler(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
-	int ret;
+	int ret, att_locked = 0;
 	int seg_tg_mmap_sem_locked = 0, vma_verification_needed = 0;
 	u64 vaddr = (u64)(uintptr_t) vmf->virtual_address;
 	u64 seg_vaddr;
-	unsigned long pfn = 0;
+	unsigned long pfn = 0, old_pfn = 0;
 	struct xpmem_thread_group *ap_tg, *seg_tg;
 	struct xpmem_access_permit *ap;
 	struct xpmem_attachment *att;
 	struct xpmem_segment *seg;
-	sigset_t oldset;
 
 	if (current->flags & PF_DUMPCORE)
 		return VM_FAULT_SIGBUS;
@@ -216,20 +233,18 @@ avoid_deadlock_2:
 		vma_verification_needed = 0;
 	}
 
-	xpmem_block_nonfatal_signals(&oldset);
-	if (mutex_lock_interruptible(&att->mutex)) {
-		xpmem_unblock_nonfatal_signals(&oldset);
+	if (mutex_lock_killable(&att->mutex))
 		goto out_2;
-	}
-	xpmem_unblock_nonfatal_signals(&oldset);
+	else
+		att_locked = 1;
 
 	if ((att->flags & XPMEM_FLAG_DESTROYING) ||
 	    (ap_tg->flags & XPMEM_FLAG_DESTROYING) ||
 	    (seg_tg->flags & XPMEM_FLAG_DESTROYING))
-		goto out_3;
+		goto out_2;
 
 	if (vaddr < att->at_vaddr || vaddr + 1 > att->at_vaddr + att->at_size)
-		goto out_3;
+		goto out_2;
 
 	/* translate the fault virtual address to the source virtual address */
 	seg_vaddr = ((u64)att->vaddr & PAGE_MASK) + (vaddr - att->at_vaddr);
@@ -241,11 +256,10 @@ avoid_deadlock_2:
 		 * The faulting thread's mmap_sem is numerically smaller
 		 * than the seg's thread group's mmap_sem address-wise,
 		 * therefore we need to acquire the latter's mmap_sem in a
-		 * safe manner before calling xpmem_ensure_valid_PFNs() to
+		 * safe manner before calling xpmem_ensure_valid_PFN() to
 		 * avoid a potential deadlock.
 		 */
 		seg_tg_mmap_sem_locked = 1;
-		atomic_inc(&seg_tg->mm->mm_users);
 		if (!down_read_trylock(&seg_tg->mm->mmap_sem)) {
 			mutex_unlock(&att->mutex);
 			up_read(&current->mm->mmap_sem);
@@ -256,11 +270,9 @@ avoid_deadlock_2:
 		}
 	}
 
-	ret = xpmem_ensure_valid_PFNs(seg, seg_vaddr, 1,
-				      seg_tg_mmap_sem_locked);
+	ret = xpmem_ensure_valid_PFN(seg, seg_vaddr, seg_tg_mmap_sem_locked);
 	if (seg_tg_mmap_sem_locked) {
 		up_read(&seg_tg->mm->mmap_sem);
-		atomic_dec(&seg_tg->mm->mm_users);
 		seg_tg_mmap_sem_locked = 0;
 	}
 	if (ret != 0) {
@@ -269,40 +281,69 @@ avoid_deadlock_2:
 			xpmem_seg_up_read(seg_tg, seg, 1);
 			goto avoid_deadlock_1;
 		}
-		goto out_3;
+		goto out_2;
 	}
 
 	pfn = xpmem_vaddr_to_PFN(seg_tg->mm, seg_vaddr);
 
 	att->flags |= XPMEM_FLAG_VALIDPTEs;
 
-out_3:
-	mutex_unlock(&att->mutex);
 out_2:
-	if (seg_tg_mmap_sem_locked) {
+	if (seg_tg_mmap_sem_locked)
 		up_read(&seg_tg->mm->mmap_sem);
-		atomic_dec(&seg_tg->mm->mm_users);
-	}
 	xpmem_seg_up_read(seg_tg, seg, 1);
 out_1:
-	xpmem_att_deref(att);
 	xpmem_ap_deref(ap);
 	xpmem_tg_deref(ap_tg);
-	xpmem_seg_deref(seg);
-	xpmem_tg_deref(seg_tg);
+
+	ret = VM_FAULT_SIGBUS;
+
+	/*
+	 * remap_pfn_range() does not allow racing threads to each insert
+	 * the PFN for a given virtual address.  To account for this, we
+	 * call remap_pfn_range() with the att->mutex locked and don't
+	 * perform the redundant remap_pfn_range() when a PFN already exists.
+	 */
 	if (pfn_valid(pfn) && pfn > 0) {
+		old_pfn = xpmem_vaddr_to_PFN(current->mm, vaddr);
+		if (old_pfn) {
+			if (old_pfn == pfn) {
+				ret = VM_FAULT_NOPAGE;
+			} else {
+				/* should not be possible, but just in case */
+				printk("xpmem_fault_handler: pfn mismatch: "
+				       "%ld != %ld\n", old_pfn, pfn);
+			}
+
+			page_cache_release(pfn_to_page(pfn));
+			atomic_dec(&seg->tg->n_pinned);
+			atomic_inc(&xpmem_my_part->n_unpinned);
+			goto out;
+		}
+
 		XPMEM_DEBUG("calling remap_pfn_range() vaddr=%llx, pfn=%lx",
 				vaddr, pfn);
-		ret = remap_pfn_range(vma, vaddr, pfn, PAGE_SIZE,
-					vma->vm_page_prot);
-		XPMEM_DEBUG("remap_pfn_range returned %d", ret);
-		if (!ret)
-			return VM_FAULT_NOPAGE;
+		if ((remap_pfn_range(vma, vaddr, pfn, PAGE_SIZE,
+				     vma->vm_page_prot)) == 0) {
+			ret = VM_FAULT_NOPAGE;
+		}
 	}
-	return VM_FAULT_SIGBUS;
+out:
+	xpmem_seg_deref(seg);
+	xpmem_tg_deref(seg_tg);
+
+	if (att_locked) {
+		mutex_unlock(&att->mutex);
+	}
+
+	/* NTH: Cray had this conditional on att_locked but that seems incorrect */
+	xpmem_att_deref(att);
+
+	return ret;
 }
 
 struct vm_operations_struct xpmem_vm_ops = {
+	.open = xpmem_open_handler,
 	.close = xpmem_close_handler,
 	.fault = xpmem_fault_handler
 };
@@ -410,6 +451,7 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 	att->ap = ap;
 	INIT_LIST_HEAD(&att->att_list);
 	att->mm = current->mm;
+	mutex_init(&att->invalidate_mutex);
 
 	xpmem_att_not_destroyable(att);
 	xpmem_att_ref(att);
@@ -461,7 +503,7 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 
 	vma->vm_private_data = att;
 	vma->vm_flags |=
-	    VM_DONTCOPY | VM_IO | VM_DONTEXPAND | VM_PFNMAP;
+	    VM_DONTCOPY | VM_DONTDUMP | VM_IO | VM_DONTEXPAND | VM_PFNMAP;
 	vma->vm_ops = &xpmem_vm_ops;
 
 	att->at_vma = vma;
@@ -507,7 +549,6 @@ xpmem_detach(u64 at_vaddr)
 	struct xpmem_access_permit *ap;
 	struct xpmem_attachment *att;
 	struct vm_area_struct *vma;
-	sigset_t oldset;
 
 	down_write(&current->mm->mmap_sem);
 
@@ -525,22 +566,25 @@ xpmem_detach(u64 at_vaddr)
 	}
 	xpmem_att_ref(att);
 
-	xpmem_block_nonfatal_signals(&oldset);
-	if (mutex_lock_interruptible(&att->mutex)) {
-		xpmem_unblock_nonfatal_signals(&oldset);
+	if (mutex_lock_killable(&att->mutex)) {
 		xpmem_att_deref(att);
 		up_write(&current->mm->mmap_sem);
 		return -EINTR;
 	}
-	xpmem_unblock_nonfatal_signals(&oldset);
+
+	/* ensure we aren't racing with MMU notifier PTE cleanup */
+	mutex_lock(&att->invalidate_mutex);
 
 	if (att->flags & XPMEM_FLAG_DESTROYING) {
+		mutex_unlock(&att->invalidate_mutex);
 		mutex_unlock(&att->mutex);
 		xpmem_att_deref(att);
 		up_write(&current->mm->mmap_sem);
 		return 0;
 	}
 	att->flags |= XPMEM_FLAG_DESTROYING;
+
+	mutex_unlock(&att->invalidate_mutex);
 
 	ap = att->ap;
 	xpmem_ap_ref(ap);
@@ -611,14 +655,21 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 		current->mm = att->mm;
 	}
 
+	/* ensure we aren't racing with MMU notifier PTE cleanup */
+	mutex_lock(&att->invalidate_mutex);
+
 	if (att->flags & XPMEM_FLAG_DESTROYING) {
+		mutex_unlock(&att->invalidate_mutex);
 		mutex_unlock(&att->mutex);
 		up_write(&current->mm->mmap_sem);
 		/* restore the current mm */
 		current->mm = current_mm;
 		return;
 	}
+
 	att->flags |= XPMEM_FLAG_DESTROYING;
+
+	mutex_unlock(&att->invalidate_mutex);
 
 	/* find the corresponding vma */
 	vma = find_vma(current->mm, att->at_vaddr);
@@ -665,7 +716,7 @@ static void
 xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 							int from_mmu)
 {
-	int locked_mmap = 1, locked_att = 1, ret;
+	int ret;
 
 	/*
 	 * This function should ideally acquire both att->mm->mmap_sem
@@ -682,9 +733,13 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 	 */
 
 	if (from_mmu) {
-		locked_mmap = down_read_trylock(&att->mm->mmap_sem);
-		locked_att = mutex_trylock(&att->mutex);
+		mutex_lock(&att->invalidate_mutex);
+		if (att->flags & XPMEM_FLAG_DESTROYING) {
+			mutex_unlock(&att->invalidate_mutex);
+			return;
+		}
 	} else {
+		/* Must lock mmap_sem before att's sema to prevent deadlock. */
 		down_read(&att->mm->mmap_sem);
 		mutex_lock(&att->mutex);
 	}
@@ -750,7 +805,7 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 		 * Clear the PTEs, using the vma out of the att if we
 		 * couldn't acquire the mmap_sem.
 		 */
-		if (!locked_mmap)
+		if (from_mmu)
 			vma = att->at_vma;
 		else
 			vma = find_vma(att->mm, att->at_vaddr);
@@ -766,10 +821,12 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 			att->flags &= ~XPMEM_FLAG_VALIDPTEs;
 	}
 out:
-	if (locked_att)
+	if (from_mmu) {
+		mutex_unlock(&att->invalidate_mutex);
+	} else {
 		mutex_unlock(&att->mutex);
-	if (locked_mmap)
 		up_read(&att->mm->mmap_sem);
+	}
 }
 
 /*

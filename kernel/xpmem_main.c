@@ -4,8 +4,7 @@
  * for more details.
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
- * Copyright (c) 2014      Los Alamos National Security, LLC. All rights
- *                         reserved.
+ * Copyright 2010, 2014 Cray Inc. All Rights Reserved
  */
 
 /*
@@ -33,17 +32,15 @@
 #include <xpmem.h>
 #include "xpmem_private.h"
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+#define proc_set_user(_pde, _uid, _gid)				\
+	do {							\
+		(_pde)->uid = _uid;				\
+		(_pde)->gid = _gid;				\
+	} while (0)
+#endif
+
 struct xpmem_partition *xpmem_my_part = NULL;  /* pointer to this partition */
-
-const struct file_operations unpin_procfs_ops = {
-	.write = xpmem_unpin_procfs_write,
-	.read = xpmem_unpin_procfs_read,
-};
-
-const struct file_operations debug_prink_procfs_ops = {
-	.write = xpmem_debug_printk_procfs_write,
-	.read = xpmem_debug_printk_procfs_read,
-};
 
 /*
  * User open of the XPMEM driver. Called whenever /dev/xpmem is opened.
@@ -73,13 +70,13 @@ xpmem_open(struct inode *inode, struct file *file)
 
 	spin_lock_init(&tg->lock);
 	tg->tgid = current->tgid;
-	tg->uid = from_kuid(&init_user_ns, current->cred->uid);
-	tg->gid = from_kgid(&init_user_ns, current->cred->gid);
+	tg->uid = current_uid();
+	tg->gid = current_gid();
 	atomic_set(&tg->uniq_segid, 0);
 	atomic_set(&tg->uniq_apid, 0);
 	atomic_set(&tg->n_pinned, 0);
 	tg->addr_limit = TASK_SIZE;
-	tg->seg_list_lock = __RW_LOCK_UNLOCKED(xpmem_tg_seg_list_lock);
+	rwlock_init(&tg->seg_list_lock);
 	INIT_LIST_HEAD(&tg->seg_list);
 	INIT_LIST_HEAD(&tg->tg_hashlist);
 	atomic_set(&tg->n_recall_PFNs, 0);
@@ -105,18 +102,20 @@ xpmem_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 	}
 	for (index = 0; index < XPMEM_AP_HASHTABLE_SIZE; index++) {
-		tg->ap_hashtable[index].lock = __RW_LOCK_UNLOCKED(xpmem_ap_hashtable_lock);
+		rwlock_init(&tg->ap_hashtable[index].lock);
 		INIT_LIST_HEAD(&tg->ap_hashtable[index].list);
 	}
 
 	snprintf(tgid_string, XPMEM_TGID_STRING_LEN, "%d", current->tgid);
 	spin_lock(&xpmem_unpin_procfs_lock);
-	unpin_entry = proc_create_data (tgid_string, 0644, xpmem_unpin_procfs_dir,
-					&unpin_procfs_ops,
-					(void *)(unsigned long) current->tgid);
+	unpin_entry = proc_create_data(tgid_string, 0644,
+				       xpmem_unpin_procfs_dir,
+				       &xpmem_unpin_procfs_ops,
+				       (void *)(unsigned long)current->tgid);
 	spin_unlock(&xpmem_unpin_procfs_lock);
-	/* NTH: TODO -- used to set the uid/gid in the unpin_entry. The structure
-	 * is private now and these values can no longer be set. */
+	if (unpin_entry != NULL) {
+		proc_set_user(unpin_entry, current_uid(), current_gid());
+	}
 
 	xpmem_tg_not_destroyable(tg);
 
@@ -128,21 +127,81 @@ xpmem_open(struct inode *inode, struct file *file)
 	write_unlock(&xpmem_my_part->tg_hashtable[index].lock);
 
 	/*
-	 * Increment 'usage' and 'mm->mm_users' for the current task's thread
-	 * group leader. This ensures that both its task_struct and mm_struct
-	 * will still be around when our thread group exits. (The Linux kernel
-	 * normally tears down the mm_struct prior to calling a module's
-	 * 'flush' function.) Since all XPMEM thread groups must go through
-	 * this path, this extra reference to mm_users also allows us to
-	 * directly inc/dec mm_users in xpmem_ensure_valid_PFNs() and avoid
-	 * mmput() which has a scaling issue with the mmlist_lock.
+	 * Increment 'usage' for the current task's thread group leader, and
+	 * store the task and mm_struct addresses in the tg structure for
+	 * reference without lookup in later functions.  It is OK to store
+	 * the mm_struct address in the tg, since no process using XPMEM
+	 * can mmput() its mm_struct until it has removed all its XPMEM data
+	 * and any references to it from other processes (thanks to MMU
+	 * notifiers).
 	 */
 	get_task_struct(current->group_leader);
 	tg->group_leader = current->group_leader;
 	BUG_ON(current->mm != current->group_leader->mm);
-	atomic_inc(&current->group_leader->mm->mm_users);
 
 	return 0;
+}
+
+/*
+ * Destroy a xpmem_thread_group.  The call to mmu_notifier_unregister()
+ * ensures that all linked structures are cleaned up and no future references
+ * can be made.
+ */
+static void
+xpmem_destroy_tg(struct xpmem_thread_group *tg)
+{
+	int index;
+
+	XPMEM_DEBUG("tg->mm=%p", tg->mm);
+
+	/*
+	 * Calls MMU release function if exit_mmap() has not executed yet.
+	 * Decrements mm_count.
+	 */
+	mmu_notifier_unregister(&tg->mmu_not, tg->mm);
+
+	/*
+	 * At this point, XPMEM no longer needs to reference the thread group
+	 * leader's task_struct.  Decrement its task 'usage' to account for
+	 * the extra increment previously done in xpmem_open().
+	 */
+	put_task_struct(tg->group_leader);
+
+	/* Remove tg structure from its hash list */
+	index = xpmem_tg_hashtable_index(tg->tgid);
+	write_lock(&xpmem_my_part->tg_hashtable[index].lock);
+	list_del_init(&tg->tg_hashlist);
+	write_unlock(&xpmem_my_part->tg_hashtable[index].lock);
+
+	xpmem_tg_destroyable(tg);
+	xpmem_tg_deref(tg);
+}
+
+/*
+ * Remove XPMEM data structures and references for a given tg.  This is
+ * called whenever an address space is destroyed or when a process closes
+ * /dev/xpmem.  We always arrive here via a MMU release callout.
+ */
+void
+xpmem_teardown(struct xpmem_thread_group *tg)
+{
+	XPMEM_DEBUG("tg->mm=%p", tg->mm);
+
+	spin_lock(&tg->lock);
+	DBUG_ON(tg->flags & XPMEM_FLAG_DESTROYING);
+	tg->flags |= XPMEM_FLAG_DESTROYING;
+	spin_unlock(&tg->lock);
+
+	xpmem_release_aps_of_tg(tg);
+	xpmem_remove_segs_of_tg(tg);
+
+	/* We don't call xpmem_destroy_tg() here.  We can't call
+	 * mmu_notifier_unregister() when the stack started with a
+	 * mmu_notifier_release() callout or we'll deadlock in the kernel
+	 * MMU notifier code.  xpmem_destroy_tg() will be called when the
+	 * close of /dev/xpmem occurs as deadlocks are not possible then.
+	 */
+	xpmem_tg_deref(tg);
 }
 
 /*
@@ -153,9 +212,25 @@ static int
 xpmem_flush(struct file *file, fl_owner_t owner)
 {
 	struct xpmem_thread_group *tg;
-	int index;
 
-	tg = xpmem_tg_ref_by_tgid(current->tgid);
+	/*
+	 * During a call to fork() there is a check for whether the parent
+	 * process has any pending signals. If there are pending signals, then
+	 * the fork aborts, and the child process is removed before delivering
+	 * the signal and starting the fork again. In that case, we can end up
+	 * here, but since we're mid-fork, current is pointing to the parent's
+	 * task_struct and not the child's. This would cause us to remove the
+	 * parent's xpmem mappings by accident. We check here whether the owner
+	 * pointer we have is the same as the current->files pointer. If it is,
+	 * or if current->files is NULL, then this flush really does belong to
+	 * the current process. If they don't match, then we return without
+	 * doing anything since the child shouldn't have a valid
+	 * xpmem_thread_group struct yet.
+	 */
+	if (current->files && current->files != owner)
+		return 0;
+
+	tg = xpmem_tg_ref_by_tgid_all(current->tgid);
 	if (IS_ERR(tg)) {
 		/*
 		 * xpmem_flush() can get called twice for thread groups
@@ -167,36 +242,9 @@ xpmem_flush(struct file *file, fl_owner_t owner)
 		return 0;
 	}
 
-	spin_lock(&tg->lock);
-	if (tg->flags & XPMEM_FLAG_DESTROYING) {
-		spin_unlock(&tg->lock);
-		xpmem_tg_deref(tg);
-		return -EALREADY;
-	}
-	tg->flags |= XPMEM_FLAG_DESTROYING;
-	spin_unlock(&tg->lock);
+	XPMEM_DEBUG("tg->mm=%p", tg->mm);
 
-	xpmem_release_aps_of_tg(tg);
-	xpmem_remove_segs_of_tg(tg);
-	xpmem_mmu_notifier_unlink(tg);
-
-	/*
-	 * At this point, XPMEM no longer needs to reference the thread group
-	 * leader's task_struct or mm_struct. Decrement its 'usage' and
-	 * 'mm->mm_users' to account for the extra increments previously done
-	 * in xpmem_open().
-	 */
-	mmput(tg->mm);
-	put_task_struct(tg->group_leader);
-
-	/* Remove tg structure from its hash list */
-	index = xpmem_tg_hashtable_index(tg->tgid);
-	write_lock(&xpmem_my_part->tg_hashtable[index].lock);
-	list_del_init(&tg->tg_hashlist);
-	write_unlock(&xpmem_my_part->tg_hashtable[index].lock);
-
-	xpmem_tg_destroyable(tg);
-	xpmem_tg_deref(tg);
+	xpmem_destroy_tg(tg);
 
 	return 0;
 }
@@ -224,7 +272,7 @@ xpmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 		ret = xpmem_make(make_info.vaddr, make_info.size,
 				 make_info.permit_type,
-				 (void *)(uintptr_t) make_info.permit_value, &segid);
+				 (void *)make_info.permit_value, &segid);
 		if (ret != 0)
 			return ret;
 
@@ -254,7 +302,7 @@ xpmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 		ret = xpmem_get(get_info.segid, get_info.flags,
 				get_info.permit_type,
-				(void *)(uintptr_t) get_info.permit_value, &apid);
+				(void *)get_info.permit_value, &apid);
 		if (ret != 0)
 			return ret;
 
@@ -318,7 +366,7 @@ xpmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 }
 
 static struct file_operations xpmem_fops = {
-	//.owner = THIS_MODULE,
+	.owner = THIS_MODULE,
 	.open = xpmem_open,
 	.flush = xpmem_flush,
 	.unlocked_ioctl = xpmem_ioctl,
@@ -354,17 +402,17 @@ xpmem_init(void)
 	}
 
 	for (i = 0; i < XPMEM_TG_HASHTABLE_SIZE; i++) {
-		xpmem_my_part->tg_hashtable[i].lock = __RW_LOCK_UNLOCKED(xpmem_tg_hashtable_lock);
+		rwlock_init(&xpmem_my_part->tg_hashtable[i].lock);
 		INIT_LIST_HEAD(&xpmem_my_part->tg_hashtable[i].list);
 	}
 
 	/* create the /proc interface directory (/proc/xpmem) */
+	spin_lock_init(&xpmem_unpin_procfs_lock);
 	xpmem_unpin_procfs_dir = proc_mkdir(XPMEM_MODULE_NAME, NULL);
 	if (xpmem_unpin_procfs_dir == NULL) {
 		ret = -EBUSY;
 		goto out_1;
 	}
-	//xpmem_unpin_procfs_dir->owner = THIS_MODULE;
 
 	/* create the XPMEM character device (/dev/xpmem) */
 	ret = misc_register(&xpmem_dev_handle);
@@ -374,27 +422,24 @@ xpmem_init(void)
 	/* create debugging entries in /proc/xpmem */
 	atomic_set(&xpmem_my_part->n_pinned, 0);
 	atomic_set(&xpmem_my_part->n_unpinned, 0);
-	global_pages_entry = proc_create ("global_pages", 0644,
-					  xpmem_unpin_procfs_dir,
-					  &unpin_procfs_ops);
+	global_pages_entry = proc_create_data("global_pages", 0644,
+					      xpmem_unpin_procfs_dir,
+					      &xpmem_unpin_procfs_ops,
+					      (void *)0UL);
 	if (global_pages_entry == NULL) {
 		ret = -EBUSY;
 		goto out_3;
 	}
 
-	/* NTH: TODO -- used to set the uid/gid in the global_pages_entry
-	 * but the structure is now private. Figure out how (if necessary)
-	 * to set these values. */
-
 	/* printk debugging */
-	debug_printk_entry = proc_create ("debug_printk", 0644,
-					  xpmem_unpin_procfs_dir,
-					  &debug_prink_procfs_ops);
+	debug_printk_entry = proc_create("debug_printk", 0644,
+					 xpmem_unpin_procfs_dir,
+					 &xpmem_debug_printk_procfs_ops);
 	if (debug_printk_entry == NULL) {
 		ret = -EBUSY;
 		goto out_4;
 	}
-	
+
 	printk("SGI XPMEM kernel module v%s loaded\n",
 	       XPMEM_CURRENT_VERSION_STRING);
 	return 0;

@@ -4,7 +4,8 @@
  * for more details.
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
- * Copyright (c) 2014      Los Alamos National Security, LCC. All rights
+ * Copyright 2009, 2010, 2014 Cray Inc. All Rights Reserved
+ * Copyright (c) 2014-2015 Los Alamos National Security, LCC. All rights
  *                         reserved.
  */
 
@@ -48,6 +49,7 @@
  *     2.2    CRAY: add support for MMU notifiers
  *     2.3    LANL: remove need for non-exported kernel functions
  *            and add update for kernel 3.13
+ *     2.3.1  Cherry-pick Cray changes
  *
  * This int constant has the following format:
  *
@@ -58,8 +60,8 @@
  *       major - major revision number (12-bits)
  *       minor - minor revision number (16-bits)
  */
-#define XPMEM_CURRENT_VERSION		0x00023000
-#define XPMEM_CURRENT_VERSION_STRING	"2.3"
+#define XPMEM_CURRENT_VERSION		0x00023001
+#define XPMEM_CURRENT_VERSION_STRING	"2.3.1"
 
 #define XPMEM_MODULE_NAME "xpmem"
 
@@ -170,6 +172,47 @@ xpmem_vaddr_to_pte_offset(struct mm_struct *mm, u64 vaddr, u64 *offset)
 	return pte;
 }
 
+/*
+ * This is similar to xpmem_vaddr_to_pte_offset, except it should
+ * only be used for areas mapped with base pages. Specifically, it is used
+ * for XPMEM attachments since we know XPMEM created those mappings with base
+ * pages. The size argument is used to determine at which level of the page
+ * tables an invalid entry was found. This is used by xpmem_unpin_pages. size
+ * must always be a valid pointer.
+ */
+static inline pte_t *
+xpmem_vaddr_to_pte_size(struct mm_struct *mm, u64 vaddr, u64 *size)
+{
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+
+	pgd = pgd_offset(mm, vaddr);
+	if (!pgd_present(*pgd)) {
+		*size = PGDIR_SIZE;
+		return NULL;
+	}
+
+	pud = pud_offset(pgd, vaddr);
+	if (!pud_present(*pud)) {
+		*size = PUD_SIZE;
+		return NULL;
+	}
+	pmd = pmd_offset(pud, vaddr);
+	if (!pmd_present(*pmd)) {
+		*size = PMD_SIZE;
+		return NULL;
+	}
+
+	pte = pte_offset_map(pmd, vaddr);
+	if (!pte_present(*pte)) {
+		*size = PAGE_SIZE;
+		return NULL;
+	}
+	return pte;
+}
+
 static inline pte_t *
 xpmem_vaddr_to_pte(struct mm_struct *mm, u64 vaddr)
 {
@@ -183,8 +226,13 @@ xpmem_vaddr_to_pte(struct mm_struct *mm, u64 vaddr)
 struct xpmem_thread_group {
 	spinlock_t lock;	/* tg lock */
 	pid_t tgid;		/* tg's tgid */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,5,0)
 	uid_t uid;		/* tg's uid */
 	gid_t gid;		/* tg's gid */
+#else
+	kuid_t uid;		/* tg's uid */
+	kgid_t gid;		/* tg's gid */
+#endif
 	volatile int flags;	/* tg attributes and state */
 	atomic_t uniq_segid;
 	atomic_t uniq_apid;
@@ -246,6 +294,7 @@ struct xpmem_attachment {
 	struct xpmem_access_permit *ap;/* associated access permit */
 	struct list_head att_list;	/* atts linked to access permit */
 	struct mm_struct *mm;	/* mm struct attached to */
+	struct mutex invalidate_mutex; /* to serialize page table invalidates */
 };
 
 struct xpmem_partition {
@@ -345,7 +394,7 @@ extern void xpmem_detach_att(struct xpmem_access_permit *,
 extern int xpmem_mmap(struct file *, struct vm_area_struct *);
 
 /* found in xpmem_pfn.c */
-extern int xpmem_ensure_valid_PFNs(struct xpmem_segment *, u64, size_t, int);
+extern int xpmem_ensure_valid_PFN(struct xpmem_segment *, u64, int);
 extern int xpmem_block_recall_PFNs(struct xpmem_thread_group *, int);
 extern void xpmem_unpin_pages(struct xpmem_segment *, struct mm_struct *, u64,
 				size_t);
@@ -355,14 +404,16 @@ extern int xpmem_fork_end(void);
 #define XPMEM_TGID_STRING_LEN	11
 extern spinlock_t xpmem_unpin_procfs_lock;
 extern struct proc_dir_entry *xpmem_unpin_procfs_dir;
-extern ssize_t xpmem_unpin_procfs_write(struct file *, const char *, size_t, loff_t *);
-extern ssize_t xpmem_unpin_procfs_read(struct file *, char *, size_t, loff_t *);
+extern struct file_operations xpmem_unpin_procfs_ops;
 
 /* found in xpmem_main.c */
 extern struct xpmem_partition *xpmem_my_part;
+void xpmem_teardown(struct xpmem_thread_group *tg);
 
 /* found in xpmem_misc.c */
-extern struct xpmem_thread_group *xpmem_tg_ref_by_tgid(pid_t);
+extern struct xpmem_thread_group *__xpmem_tg_ref_by_tgid(pid_t, int);
+#define xpmem_tg_ref_by_tgid(t)                __xpmem_tg_ref_by_tgid(t, 0)
+#define xpmem_tg_ref_by_tgid_all(t)    __xpmem_tg_ref_by_tgid(t, 1)
 extern struct xpmem_thread_group *xpmem_tg_ref_by_segid(xpmem_segid_t);
 extern struct xpmem_thread_group *xpmem_tg_ref_by_apid(xpmem_apid_t);
 extern void xpmem_tg_deref(struct xpmem_thread_group *);
@@ -378,12 +429,7 @@ extern int xpmem_seg_down_read(struct xpmem_thread_group *,
 			       struct xpmem_segment *, int, int);
 extern int xpmem_validate_access(struct xpmem_access_permit *, off_t, size_t,
 				 int, u64 *);
-extern void xpmem_block_nonfatal_signals(sigset_t *);
-extern void xpmem_unblock_nonfatal_signals(sigset_t *);
-extern ssize_t xpmem_debug_printk_procfs_write(struct file *, const char *,
-					       size_t, loff_t *);
-extern ssize_t xpmem_debug_printk_procfs_read(struct file *, char *,
-					      size_t, loff_t *);
+extern struct file_operations xpmem_debug_printk_procfs_ops;
 /* found in xpmem_mmu_notifier.c */
 extern int xpmem_mmu_notifier_init(struct xpmem_thread_group *);
 extern void xpmem_mmu_notifier_unlink(struct xpmem_thread_group *);

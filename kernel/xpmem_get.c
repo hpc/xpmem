@@ -4,8 +4,6 @@
  * for more details.
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
- * Copyright (c) 2014      Los Alamos National Security, LLC. All rights
- *                         reserved.
  */
 
 /*
@@ -18,6 +16,10 @@
 #include <xpmem.h>
 #include "xpmem_private.h"
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,5,0)
+#define uid_eq(a, b)	((a) == (b))
+#endif
+
 /*
  * This is the kernel's IPC permission checking function without calls to
  * do any extra security checks. See ipc/util.c for the original source.
@@ -29,7 +31,8 @@ xpmem_ipcperms(struct kern_ipc_perm *ipcp, short flag)
 
 	requested_mode = (flag >> 6) | (flag >> 3) | flag;
 	granted_mode = ipcp->mode;
-	if (uid_eq(current->cred->euid, ipcp->cuid) || uid_eq(current->cred->euid, ipcp->uid))
+	if (uid_eq(current_euid(), ipcp->cuid) ||
+	    uid_eq(current_euid(), ipcp->uid))
 		granted_mode >>= 6;
 	else if (in_group_p(ipcp->cgid) || in_group_p(ipcp->gid))
 		granted_mode >>= 3;
@@ -52,9 +55,9 @@ xpmem_check_permit_mode(int flags, struct xpmem_segment *seg)
 	DBUG_ON(seg->permit_type != XPMEM_PERMIT_MODE);
 
 	memset(&perm, 0, sizeof(struct kern_ipc_perm));
-	perm.uid = perm.cuid = make_kuid(&init_user_ns, seg->tg->uid);
-	perm.gid = perm.cgid = make_kgid(&init_user_ns, seg->tg->gid);
-	perm.mode = (u64)(uintptr_t) seg->permit_value;
+	perm.uid = perm.cuid = seg->tg->uid;
+	perm.gid = perm.cgid = seg->tg->gid;
+	perm.mode = (u64)seg->permit_value;
 
 	ret = xpmem_ipcperms(&perm, S_IRUSR);
 	if (ret == 0 && (flags & XPMEM_RDWR))
@@ -154,7 +157,7 @@ xpmem_get(xpmem_segid_t segid, int flags, int permit_type, void *permit_value,
 		return -ENOMEM;
 	}
 
-	ap->lock = __SPIN_LOCK_UNLOCKED(xpmem_access_permit.lock);
+	spin_lock_init(&ap->lock);
 	ap->seg = seg;
 	ap->tg = ap_tg;
 	ap->apid = apid;
@@ -222,7 +225,6 @@ xpmem_release_ap(struct xpmem_thread_group *ap_tg,
 		xpmem_att_ref(att);
 		spin_unlock(&ap->lock);
 		xpmem_detach_att(ap, att);
-		DBUG_ON(atomic_read(&att->mm->mm_users) <= 0);
 		DBUG_ON(atomic_read(&att->mm->mm_count) <= 0);
 		xpmem_att_deref(att);
 		spin_lock(&ap->lock);

@@ -4,6 +4,7 @@
  * for more details.
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
+ * Copyright (c) 2009 Cray Inc. All Rights Reserved
  * Copyright (c) 2014      Los Alamos National Security, LLC. All rights
  *                         reserved.
  */
@@ -95,7 +96,7 @@ xpmem_make(u64 vaddr, size_t size, int permit_type, void *permit_value,
 		return -ENOMEM;
 	}
 
-	seg->lock = __SPIN_LOCK_UNLOCKED(xpmem_segment);
+	spin_lock_init(&seg->lock);
 	init_rwsem(&seg->sema);
 	seg->segid = segid;
 	seg->vaddr = vaddr;
@@ -123,19 +124,15 @@ xpmem_make(u64 vaddr, size_t size, int permit_type, void *permit_value,
 /*
  * Remove a segment from the system.
  */
-static int
+static void
 xpmem_remove_seg(struct xpmem_thread_group *seg_tg, struct xpmem_segment *seg)
 {
 	DBUG_ON(atomic_read(&seg->refcnt) <= 0);
 
-	/* see if the requesting thread is the segment's owner */
-	if (current->tgid != seg_tg->tgid)
-		return -EACCES;
-
 	spin_lock(&seg->lock);
 	if (seg->flags & XPMEM_FLAG_DESTROYING) {
 		spin_unlock(&seg->lock);
-		return 0;
+		return;
 	}
 	seg->flags |= XPMEM_FLAG_DESTROYING;
 	spin_unlock(&seg->lock);
@@ -157,8 +154,6 @@ xpmem_remove_seg(struct xpmem_thread_group *seg_tg, struct xpmem_segment *seg)
 
 	xpmem_seg_up_write(seg);
 	xpmem_seg_destroyable(seg);
-
-	return 0;
 }
 
 /*
@@ -169,22 +164,18 @@ xpmem_remove_segs_of_tg(struct xpmem_thread_group *seg_tg)
 {
 	struct xpmem_segment *seg;
 
-	DBUG_ON(current->tgid != seg_tg->tgid);
-
 	read_lock(&seg_tg->seg_list_lock);
 
 	while (!list_empty(&seg_tg->seg_list)) {
 		seg = list_entry((&seg_tg->seg_list)->next,
 				 struct xpmem_segment, seg_list);
-		if (!(seg->flags & XPMEM_FLAG_DESTROYING)) {
-			xpmem_seg_ref(seg);
-			read_unlock(&seg_tg->seg_list_lock);
+		xpmem_seg_ref(seg);
+		read_unlock(&seg_tg->seg_list_lock);
 
-			(void)xpmem_remove_seg(seg_tg, seg);
+		xpmem_remove_seg(seg_tg, seg);
 
-			xpmem_seg_deref(seg);
-			read_lock(&seg_tg->seg_list_lock);
-		}
+		xpmem_seg_deref(seg);
+		read_lock(&seg_tg->seg_list_lock);
 	}
 	read_unlock(&seg_tg->seg_list_lock);
 }
@@ -197,7 +188,6 @@ xpmem_remove(xpmem_segid_t segid)
 {
 	struct xpmem_thread_group *seg_tg;
 	struct xpmem_segment *seg;
-	int ret;
 
 	if (segid <= 0)
 		return -EINVAL;
@@ -218,9 +208,9 @@ xpmem_remove(xpmem_segid_t segid)
 	}
 	DBUG_ON(seg->tg != seg_tg);
 
-	ret = xpmem_remove_seg(seg_tg, seg);
+	xpmem_remove_seg(seg_tg, seg);
 	xpmem_seg_deref(seg);
 	xpmem_tg_deref(seg_tg);
 
-	return ret;
+	return 0;
 }

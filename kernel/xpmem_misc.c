@@ -4,8 +4,7 @@
  * for more details.
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
- * Copyright (c) 2014      Los Alamos National Security, LLC. All rights
- *                         reserved.
+ * Copyright 2009, 2010, 2014 Cray Inc. All Rights Reserved
  */
 
 /*
@@ -14,6 +13,7 @@
 
 #include <linux/mm.h>
 #include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 #include <linux/uaccess.h>
 #include <xpmem.h>
 #include "xpmem_private.h"
@@ -26,10 +26,12 @@ uint32_t xpmem_debug_on = 0;
 
 /*
  * Return a pointer to the xpmem_thread_group structure that corresponds to the
- * specified tgid. Increment the refcnt as well if found.
+ * specified tgid. Increment the refcnt as well if found.  If return_destroying
+ * is set, return xpmem_thread_group structures even if they are tagged with
+ * XPMEM_FLAG_DESTROYING.
  */
 struct xpmem_thread_group *
-xpmem_tg_ref_by_tgid(pid_t tgid)
+__xpmem_tg_ref_by_tgid(pid_t tgid, int return_destroying)
 {
 	int index;
 	struct xpmem_thread_group *tg;
@@ -40,8 +42,10 @@ xpmem_tg_ref_by_tgid(pid_t tgid)
 	list_for_each_entry(tg, &xpmem_my_part->tg_hashtable[index].list,
 								tg_hashlist) {
 		if (tg->tgid == tgid) {
-			if (tg->flags & XPMEM_FLAG_DESTROYING)
+			if ((tg->flags & XPMEM_FLAG_DESTROYING) &&
+			    !return_destroying) {
 				continue;  /* could be others with this tgid */
+			}
 
 			xpmem_tg_ref(tg);
 			read_unlock(&xpmem_my_part->tg_hashtable[index].lock);
@@ -281,47 +285,11 @@ xpmem_validate_access(struct xpmem_access_permit *ap, off_t offset,
 }
 
 /*
- * Only allow through SIGTERM or SIGKILL if they will be fatal to the
- * current thread.
- */
-void
-xpmem_block_nonfatal_signals(sigset_t *oldset)
-{
-	unsigned long flags;
-	sigset_t new_blocked_signals;
-
-	spin_lock_irqsave(&current->sighand->siglock, flags);
-	*oldset = current->blocked;
-	sigfillset(&new_blocked_signals);
-	sigdelset(&new_blocked_signals, SIGTERM);
-	if (current->sighand->action[SIGKILL - 1].sa.sa_handler == SIG_DFL)
-		sigdelset(&new_blocked_signals, SIGKILL);
-
-	current->blocked = new_blocked_signals;
-	recalc_sigpending();
-	spin_unlock_irqrestore(&current->sighand->siglock, flags);
-}
-
-/*
- * Return blocked signal mask to default.
- */
-void
-xpmem_unblock_nonfatal_signals(sigset_t *oldset)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&current->sighand->siglock, flags);
-	current->blocked = *oldset;
-	recalc_sigpending();
-	spin_unlock_irqrestore(&current->sighand->siglock, flags);
-}
-
-/*
  * XPMEM printk debugging via procfs
  */
-ssize_t
-xpmem_debug_printk_procfs_write(struct file *file, const char *buffer,
-				size_t count, loff_t *pos)
+static ssize_t
+xpmem_debug_printk_procfs_write(struct file *file, const char __user *buffer,
+				size_t count, loff_t *ppos)
 {
 	char buf;
 	
@@ -336,17 +304,24 @@ xpmem_debug_printk_procfs_write(struct file *file, const char *buffer,
 	return count;
 }
 
-ssize_t
-xpmem_debug_printk_procfs_read(struct file *file, char *buffer,
-			       size_t count, loff_t *pos)
+static int
+xpmem_debug_printk_procfs_show(struct seq_file *seq, void *offset)
 {
-	int len;
-	if (*pos > 0) {
-		return 0;
-	}
-	len = snprintf(buffer, count, "%d\n", xpmem_debug_on);
-
-	*pos = len;
-
-	return len;
+	seq_printf(seq, "%d\n", xpmem_debug_on);
+	return 0;
 }
+
+static int
+xpmem_debug_printk_procfs_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, xpmem_debug_printk_procfs_show, NULL);
+}
+
+struct file_operations xpmem_debug_printk_procfs_ops = {
+	.owner		= THIS_MODULE,
+	.llseek		= seq_lseek,
+	.read		= seq_read,
+	.write		= xpmem_debug_printk_procfs_write,
+	.open		= xpmem_debug_printk_procfs_open,
+	.release	= single_release,
+};

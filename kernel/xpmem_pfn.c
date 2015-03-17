@@ -4,8 +4,7 @@
  * for more details.
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
- * Copyright (c) 2014      Los Alamos National Security, LLC. All rights
- *                         reserved.
+ * Copyright 2009, 2014 Cray Inc. All Rights Reserved
  */
 
 /*
@@ -14,6 +13,8 @@
 
 #include <linux/efi.h>
 #include <linux/pagemap.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 #include <xpmem.h>
 #include "xpmem_private.h"
 
@@ -22,19 +23,21 @@
 #define num_of_pages(v, s) \
 		(((offset_in_page(v) + (s)) + (PAGE_SIZE - 1)) >> PAGE_SHIFT)
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+#define PDE_DATA(inode)	((PDE(inode)->data))
+#endif
+
 /*
- * Fault in and pin all pages in the given range for the specified task and mm.
+ * Fault in and pin a single page for the specified task and mm.
  */
 static int
-xpmem_pin_pages(struct xpmem_thread_group *tg, struct task_struct *src_task,
-		struct mm_struct *src_mm, u64 vaddr, size_t size, int *pinned)
+xpmem_pin_page(struct xpmem_thread_group *tg, struct task_struct *src_task,
+		struct mm_struct *src_mm, u64 vaddr)
 {
-	int ret, malloc = 0, n_pgs = num_of_pages(vaddr, size);
-	struct page *pages_array[16], **pages;
+	int ret;
+	struct page *page;
 	struct vm_area_struct *vma;
 	cpumask_t saved_mask = CPU_MASK_NONE;
-
-	*pinned = 0;
 
 	vma = find_vma(src_mm, vaddr);
 	if (!vma || vma->vm_start > vaddr)
@@ -43,15 +46,6 @@ xpmem_pin_pages(struct xpmem_thread_group *tg, struct task_struct *src_task,
 	/* don't pin pages in address ranges attached from other thread groups */
 	if (xpmem_is_vm_ops_set(vma))
 		return -ENOENT;
-
-	if (n_pgs > 16) {
-		pages = kzalloc(sizeof(struct page *) * n_pgs, GFP_KERNEL);
-		if (pages == NULL)
-			return -ENOMEM;
-
-		malloc = 1;
-	} else
-		pages = pages_array;
 
 	/*
 	 * get_user_pages() may have to allocate pages on behalf of
@@ -62,28 +56,25 @@ xpmem_pin_pages(struct xpmem_thread_group *tg, struct task_struct *src_task,
 	 * we might have to temporarily switch cpus to get the page
 	 * placed where we want it.
 	 */
-	if (xpmem_vaddr_to_pte(src_mm, vaddr) == NULL &&
+	if (xpmem_vaddr_to_pte_offset(src_mm, vaddr, NULL) == NULL &&
 	    cpu_to_node(task_cpu(current)) != cpu_to_node(task_cpu(src_task))) {
 		saved_mask = current->cpus_allowed;
 		set_cpus_allowed(current, cpumask_of_cpu(task_cpu(src_task)));
 	}
 
-	/* get_user_pages() faults and pins the pages */
-	ret = get_user_pages(src_task, src_mm, vaddr, n_pgs, 1, 1, pages, NULL);
-	*pinned = 1;
+	/* get_user_pages() faults and pins the page */
+	ret = get_user_pages(src_task, src_mm, vaddr, 1, 1, 1, &page, NULL);
 
 	if (!cpus_empty(saved_mask))
 		set_cpus_allowed(current, saved_mask);
 
-	if (malloc)
-		kfree(pages);
+	if (ret == 1) {
+		atomic_inc(&tg->n_pinned);
+		atomic_inc(&xpmem_my_part->n_pinned);
+		ret = 0;
+	}
 
-	DBUG_ON(ret != n_pgs);
-
-	atomic_add(ret, &tg->n_pinned);
-	atomic_add(ret, &xpmem_my_part->n_pinned);
-
-	return 0;
+	return ret;
 }
 
 /*
@@ -96,24 +87,39 @@ xpmem_unpin_pages(struct xpmem_segment *seg, struct mm_struct *mm,
 	int n_pgs = num_of_pages(vaddr, size);
 	int n_pgs_unpinned = 0;
 	struct page *page;
-	u64 pfn;
+	u64 pfn, vsize = 0;
+	pte_t *pte = NULL;
 
-	XPMEM_DEBUG("vaddr=%llx, size=%lx, n_pgs=%d", vaddr, (unsigned long) size, n_pgs);
+	XPMEM_DEBUG("vaddr=%llx, size=%lx, n_pgs=%d", vaddr, size, n_pgs);
+
+	/* Round down to the nearest page aligned address */
+	vaddr &= PAGE_MASK;
 
 	while (n_pgs > 0) {
-		pfn = xpmem_vaddr_to_PFN(mm, vaddr);
+		pte = xpmem_vaddr_to_pte_size(mm, vaddr, &vsize);
 
-		/* If the PTE is not present, xpmem_vaddr_to_PFN() returns 0 */
-		if (pfn != 0) {
+		if (pte) {
+			DBUG_ON(!pte_present(*pte));
+			pfn = pte_pfn(*pte);
 			XPMEM_DEBUG("pfn=%llx, vaddr=%llx, n_pgs=%d",
 					pfn, vaddr, n_pgs);
 			page = virt_to_page(__va(pfn << PAGE_SHIFT));
 			page_cache_release(page);
 			n_pgs_unpinned++;
+			vaddr += PAGE_SIZE;
+			n_pgs--;
+		} else {
+			/*
+			 * vsize holds the memory size we know isn't mapped,
+			 * based on which level of the page tables had an
+			 * invalid entry. We round up to the nearest address
+			 * that could have valid pages and find how many pages
+			 * we skipped.
+			 */
+			vsize = ((vaddr + vsize) & (~(vsize - 1)));
+			n_pgs -= (vsize - vaddr)/PAGE_SIZE;
+			vaddr = vsize;
 		}
-
-		vaddr += PAGE_SIZE;
-		n_pgs--;
 	}
 
 	atomic_sub(n_pgs_unpinned, &seg->tg->n_pinned);
@@ -121,52 +127,15 @@ xpmem_unpin_pages(struct xpmem_segment *seg, struct mm_struct *mm,
 }
 
 /*
- * Determine unknown PFNs for a given virtual address range.
- */
-static int
-xpmem_get_PFNs(struct xpmem_segment *seg, u64 vaddr, size_t size)
-{
-	struct xpmem_thread_group *seg_tg = seg->tg;
-	struct task_struct *src_task = seg_tg->group_leader;
-	struct mm_struct *src_mm = seg_tg->mm;
-	int ret, pinned;
-
-	/*
-	 * We used to look up the source task_struct by tgid, but that
-	 * was a performance killer. Instead we stash a pointer to the
-	 * thread group leader's task_struct in the xpmem_thread_group structure.
-	 * This is safe because we incremented the task_struct's usage count
-	 * at the same time we stashed the pointer.
-	 */
-
-	/*
-	 * Find and pin the pages. xpmem_pin_pages() fails if there are
-	 * holes in the vaddr range (which is what we want to happen).
-	 */
-	ret = xpmem_pin_pages(seg_tg, src_task, src_mm, vaddr, size, &pinned);
-
-	if (ret != 0 && pinned)
-		xpmem_unpin_pages(seg, src_mm, vaddr, size);
-
-	return ret;
-}
-
-/*
- * Given a virtual address range and XPMEM segment, determine which portions
- * of that range XPMEM needs to fetch PFN information for. As unknown
- * contiguous portions of the virtual address range are determined, other
- * functions are called to do the actual PFN discovery tasks.
+ * Given a virtual address and XPMEM segment, grab any locks necessary and
+ * pin the page.
  */
 int
-xpmem_ensure_valid_PFNs(struct xpmem_segment *seg, u64 vaddr, size_t size,
+xpmem_ensure_valid_PFN(struct xpmem_segment *seg, u64 vaddr,
 			int mmap_sem_prelocked)
 {
-	int ret = -1, n_pgs = num_of_pages(vaddr, size), mmap_sem_locked = 0;
-	u64 l_vaddr = vaddr + size, t_vaddr = vaddr;
-	size_t t_size;
+	int ret = -1, mmap_sem_locked = 0;
 	struct xpmem_thread_group *seg_tg = seg->tg;
-
-	DBUG_ON(n_pgs <= 0);
 
 	/*
 	 * If we're faulting a page in our own address space, we don't have to
@@ -178,7 +147,6 @@ xpmem_ensure_valid_PFNs(struct xpmem_segment *seg, u64 vaddr, size_t size,
 	 */
 	if (seg_tg->mm != current->mm) {
 		if (!mmap_sem_prelocked) {
-			atomic_inc(&seg_tg->mm->mm_users);
 			down_read(&seg_tg->mm->mmap_sem);
 			mmap_sem_locked = 1;
 		}
@@ -186,33 +154,17 @@ xpmem_ensure_valid_PFNs(struct xpmem_segment *seg, u64 vaddr, size_t size,
 
 	/* the seg may have been marked for destruction while we were down() */
 	if (seg->flags & XPMEM_FLAG_DESTROYING) {
-		if (mmap_sem_locked) {
+		if (mmap_sem_locked)
 			up_read(&seg_tg->mm->mmap_sem);
-			atomic_dec(&seg_tg->mm->mm_users);
-		}
 		return -ENOENT;
 	}
 
-	/* pin all PFNs */
-	if (n_pgs > 0) {
-		t_size = (n_pgs * PAGE_SIZE) - offset_in_page(t_vaddr);
-		if (t_vaddr + t_size > l_vaddr)
-			t_size = l_vaddr - t_vaddr;
+	/* pin PFN */
+	ret = xpmem_pin_page(seg->tg, seg_tg->group_leader,
+	                     seg_tg->mm, vaddr);
 
-		ret = xpmem_get_PFNs(seg, t_vaddr, t_size);
-		if (ret != 0) {
-			if (mmap_sem_locked) {
-				up_read(&seg_tg->mm->mmap_sem);
-				atomic_dec(&seg_tg->mm->mm_users);
-			}
-			return ret;
-		}
-	}
-
-	if (mmap_sem_locked) {
+	if (mmap_sem_locked)
 		up_read(&seg_tg->mm->mmap_sem);
-		atomic_dec(&seg_tg->mm->mm_users);
-	}
 
 	return ret;
 }
@@ -386,7 +338,7 @@ xpmem_fork_end(void)
 	return 0;
 }
 
-DEFINE_SPINLOCK(xpmem_unpin_procfs_lock);
+spinlock_t xpmem_unpin_procfs_lock;
 struct proc_dir_entry *xpmem_unpin_procfs_dir;
 
 static int
@@ -407,11 +359,12 @@ xpmem_is_thread_group_stopped(struct xpmem_thread_group *tg)
 	return 1;
 }
 
-ssize_t
-xpmem_unpin_procfs_write(struct file *file, const char *buffer, size_t count,
-			 loff_t *pos)
+static ssize_t
+xpmem_unpin_procfs_write(struct file *file, const char *buffer,
+			 size_t count, loff_t *ppos)
 {
-	pid_t tgid = (pid_t)(unsigned long) PDE_DATA(file_inode(file));
+	struct seq_file *seq = (struct seq_file *)file->private_data;
+	pid_t tgid = (unsigned long)seq->private;
 	struct xpmem_thread_group *tg;
 
 	tg = xpmem_tg_ref_by_tgid(tgid);
@@ -435,35 +388,40 @@ xpmem_unpin_procfs_write(struct file *file, const char *buffer, size_t count,
 	return count;
 }
 
-ssize_t
-xpmem_unpin_procfs_read(struct file *file, char *buffer, size_t count,
-			loff_t *pos)
+static int
+xpmem_unpin_procfs_show(struct seq_file *seq, void *offset)
 {
-	pid_t tgid = (pid_t)(unsigned long) PDE_DATA(file_inode(file));
+	pid_t tgid = (unsigned long)seq->private;
 	struct xpmem_thread_group *tg;
-	int len = 0;
-
-	if (*pos > 0) {
-		return 0;
-	}
 
 	if (tgid == 0) {
-		len = snprintf(buffer, count,
-			"all pages pinned by XPMEM: %d\n"
-			"all pages unpinned by XPMEM: %d\n",
-			atomic_read(&xpmem_my_part->n_pinned),
-			atomic_read(&xpmem_my_part->n_unpinned));
+		seq_printf(seq, "all pages pinned by XPMEM: %d\n"
+				"all pages unpinned by XPMEM: %d\n",
+				 atomic_read(&xpmem_my_part->n_pinned),
+				 atomic_read(&xpmem_my_part->n_unpinned));
 	} else {
 		tg = xpmem_tg_ref_by_tgid(tgid);
 		if (!IS_ERR(tg)) {
-			len = snprintf(buffer, count,
-				"pages pinned by XPMEM: %d\n",
-				atomic_read(&tg->n_pinned));
+			seq_printf(seq, "pages pinned by XPMEM: %d\n",
+				   atomic_read(&tg->n_pinned));
 			xpmem_tg_deref(tg);
 		}
 	}
 
-	*pos = len;
-
-	return len;
+	return 0;
 }
+
+static int
+xpmem_unpin_procfs_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, xpmem_unpin_procfs_show, PDE_DATA(inode));
+}
+
+struct file_operations xpmem_unpin_procfs_ops = {
+	.owner		= THIS_MODULE,
+	.llseek		= seq_lseek,
+	.read		= seq_read,
+	.write		= xpmem_unpin_procfs_write,
+	.open		= xpmem_unpin_procfs_open,
+	.release	= single_release,
+};
