@@ -8,9 +8,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <stropts.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 
 #include <xpmem.h>
 

@@ -59,14 +59,14 @@ xpmem_pin_page(struct xpmem_thread_group *tg, struct task_struct *src_task,
 	if (xpmem_vaddr_to_pte_offset(src_mm, vaddr, NULL) == NULL &&
 	    cpu_to_node(task_cpu(current)) != cpu_to_node(task_cpu(src_task))) {
 		saved_mask = current->cpus_allowed;
-		set_cpus_allowed(current, cpumask_of_cpu(task_cpu(src_task)));
+		set_cpus_allowed_ptr(current, cpumask_of(task_cpu(src_task)));
 	}
 
 	/* get_user_pages() faults and pins the page */
 	ret = get_user_pages(src_task, src_mm, vaddr, 1, 1, 1, &page, NULL);
 
-	if (!cpus_empty(saved_mask))
-		set_cpus_allowed(current, saved_mask);
+	if (!cpumask_empty(&saved_mask))
+		set_cpus_allowed_ptr(current, &saved_mask);
 
 	if (ret == 1) {
 		atomic_inc(&tg->n_pinned);
