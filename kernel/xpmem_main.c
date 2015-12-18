@@ -5,6 +5,7 @@
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2010, 2014 Cray Inc. All Rights Reserved
+ * Copyright 2015 Los Alamos National Security, LLC. All rights reserved.
  */
 
 /*
@@ -41,6 +42,7 @@
 #endif
 
 struct xpmem_partition *xpmem_my_part = NULL;  /* pointer to this partition */
+static spinlock_t xpmem_open_lock;
 
 /*
  * User open of the XPMEM driver. Called whenever /dev/xpmem is opened.
@@ -55,9 +57,11 @@ xpmem_open(struct inode *inode, struct file *file)
 	struct proc_dir_entry *unpin_entry;
 	char tgid_string[XPMEM_TGID_STRING_LEN];
 
+	spin_lock(&xpmem_open_lock);
 	/* if this has already been done, just return silently */
 	tg = xpmem_tg_ref_by_tgid(current->tgid);
 	if (!IS_ERR(tg)) {
+		spin_unlock(&xpmem_open_lock);
 		xpmem_tg_deref(tg);
 		return 0;
 	}
@@ -65,6 +69,7 @@ xpmem_open(struct inode *inode, struct file *file)
 	/* create tg */
 	tg = kzalloc(sizeof(struct xpmem_thread_group), GFP_KERNEL);
 	if (tg == NULL) {
+		spin_unlock(&xpmem_open_lock);
 		return -ENOMEM;
 	}
 
@@ -89,6 +94,7 @@ xpmem_open(struct inode *inode, struct file *file)
 
 	/* Register MMU notifier callbacks */
 	if (xpmem_mmu_notifier_init(tg) != 0) {
+		spin_unlock(&xpmem_open_lock);
 		kfree(tg);
 		return -EFAULT;
 	}
@@ -97,6 +103,7 @@ xpmem_open(struct inode *inode, struct file *file)
 	tg->ap_hashtable = kzalloc(sizeof(struct xpmem_hashlist) *
 				     XPMEM_AP_HASHTABLE_SIZE, GFP_KERNEL);
 	if (tg->ap_hashtable == NULL) {
+		spin_unlock(&xpmem_open_lock);
 		xpmem_mmu_notifier_unlink(tg);
 		kfree(tg);
 		return -ENOMEM;
@@ -138,6 +145,7 @@ xpmem_open(struct inode *inode, struct file *file)
 	get_task_struct(current->group_leader);
 	tg->group_leader = current->group_leader;
 	BUG_ON(current->mm != current->group_leader->mm);
+	spin_unlock(&xpmem_open_lock);
 
 	return 0;
 }
@@ -152,6 +160,7 @@ xpmem_destroy_tg(struct xpmem_thread_group *tg)
 {
 	int index;
 
+	spin_lock(&xpmem_open_lock);
 	XPMEM_DEBUG("tg->mm=%p", tg->mm);
 
 	/*
@@ -171,6 +180,7 @@ xpmem_destroy_tg(struct xpmem_thread_group *tg)
 	if (list_empty(&tg->tg_hashlist)) {
 		write_unlock(&xpmem_my_part->tg_hashtable[index].lock);
 		xpmem_tg_deref(tg);
+		spin_unlock(&xpmem_open_lock);
 		return;
 	}
 	list_del_init(&tg->tg_hashlist);
@@ -178,6 +188,7 @@ xpmem_destroy_tg(struct xpmem_thread_group *tg)
 
 	xpmem_tg_destroyable(tg);
 	xpmem_tg_deref(tg);
+	spin_unlock(&xpmem_open_lock);
 }
 
 /*
@@ -447,6 +458,8 @@ xpmem_init(void)
 		ret = -EBUSY;
 		goto out_4;
 	}
+
+	spin_lock_init (&xpmem_open_lock);
 
 	printk("SGI XPMEM kernel module v%s loaded\n",
 	       XPMEM_CURRENT_VERSION_STRING);

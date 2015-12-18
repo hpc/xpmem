@@ -55,6 +55,7 @@
  *                  access_permit
  *     2.6    CRAY: rearrange/clean-up code for easier debugging
  *     2.6.1  Merge with latest Cray version (2.4->2.6)
+ *     2.6.2  Fix race in xpmem_open
  *
  * This int constant has the following format:
  *
