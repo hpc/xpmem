@@ -50,6 +50,11 @@
  *     2.3    LANL: remove need for non-exported kernel functions
  *            and add update for kernel 3.13
  *     2.3.1  Cherry-pick Cray changes
+ *     2.4    CRAY: repair page fault mmap_sem locking
+ *     2.5    CRAY: prevent infinite loop when removing segment or
+ *                  access_permit
+ *     2.6    CRAY: rearrange/clean-up code for easier debugging
+ *     2.6.1  Merge with latest Cray version (2.4->2.6)
  *
  * This int constant has the following format:
  *
@@ -60,8 +65,8 @@
  *       major - major revision number (12-bits)
  *       minor - minor revision number (16-bits)
  */
-#define XPMEM_CURRENT_VERSION		0x00023001
-#define XPMEM_CURRENT_VERSION_STRING	"2.3.1"
+#define XPMEM_CURRENT_VERSION		0x00026001
+#define XPMEM_CURRENT_VERSION_STRING	"2.6.1"
 
 #define XPMEM_MODULE_NAME "xpmem"
 
@@ -78,146 +83,6 @@ extern uint32_t xpmem_debug_on;
 		printk("[%d]%s: "format"\n", current->tgid, __func__, ##a);
 
 #define delayed_work work_struct
-
-static inline pte_t *
-xpmem_hugetlb_pte(pte_t *pte, struct mm_struct *mm, u64 vaddr, u64 *offset)
-{
-	struct vm_area_struct *vma;
-	u64 page_size;
-
-	vma = find_vma(mm, vaddr);
-	if (!vma)
-		return NULL;
-	
-	if (is_vm_hugetlb_page(vma)) {
-		struct hstate *hs = hstate_vma(vma);
-
-		page_size = huge_page_size(hs);
-
-#ifdef CONFIG_CRAY_MRT
-		/* NTH: not sure what cray's modifications are that require the
-		 * page size here. This seems like an unnecessary second walk
-		 * of the page tables. */
-		pte = huge_pte_offset(mm, address, huge_page_size(hs));
-#endif
-	} else {
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-		/* NTH: transparent hugepages can appear in vma's that do not have
-		 * the VM_HUGETLB flag set. if we are here we know vaddr is in a
-		 * huge page so it must be within a transparent huge page. see
-		 * include/linux/huge_mm.h */
-		page_size = HPAGE_PMD_SIZE;
-#else
-		/*
-		 * We should never enter this area since xpmem_hugetlb_pte() is only
-		 * called if {pgd,pud,pmd}_large() is true
-		 */
-		BUG();
-#endif
-	}
-
-	if (offset) {
-		*offset = (vaddr & (page_size - 1)) & PAGE_MASK;
-	}
-
-	if (pte_none(*pte))
-		return NULL;
-		
-	return (pte_t *)pte;
-}
-
-/*
- * Given an address space and a virtual address return a pointer to its
- * pte if one is present.
- */
-static inline pte_t *
-xpmem_vaddr_to_pte_offset(struct mm_struct *mm, u64 vaddr, u64 *offset)
-{
-	pgd_t *pgd;
-	pud_t *pud;
-	pmd_t *pmd;
-	pte_t *pte;
-
-	if (offset)
-		/* if vaddr is not in a huge page it will always be at
-		 * offset 0 in the page. */
-		*offset = 0;
-
-	pgd = pgd_offset(mm, vaddr);
-	if (!pgd_present(*pgd))
-		return NULL;
-	/* NTH: there is no pgd_large in kernel 3.13. from what I have read
-	 * the pte is never folded into the pgd. */
-
-	pud = pud_offset(pgd, vaddr);
-	if (!pud_present(*pud))
-		return NULL;
-	else if (pud_large(*pud)) {
-		/* pte folded into the pmd which is folded into the pud */
-		return xpmem_hugetlb_pte((pte_t *) pud, mm, vaddr, offset);
-	}
-
-	pmd = pmd_offset(pud, vaddr);
-	if (!pmd_present(*pmd))
-		return NULL;
-	else if (pmd_large(*pmd)) {
-		/* pte folded into the pmd */
-		return xpmem_hugetlb_pte((pte_t *) pmd, mm, vaddr, offset);
-	}
-
-	pte = pte_offset_map(pmd, vaddr);
-	if (!pte_present(*pte))
-		return NULL;
-
-	return pte;
-}
-
-/*
- * This is similar to xpmem_vaddr_to_pte_offset, except it should
- * only be used for areas mapped with base pages. Specifically, it is used
- * for XPMEM attachments since we know XPMEM created those mappings with base
- * pages. The size argument is used to determine at which level of the page
- * tables an invalid entry was found. This is used by xpmem_unpin_pages. size
- * must always be a valid pointer.
- */
-static inline pte_t *
-xpmem_vaddr_to_pte_size(struct mm_struct *mm, u64 vaddr, u64 *size)
-{
-	pgd_t *pgd;
-	pud_t *pud;
-	pmd_t *pmd;
-	pte_t *pte;
-
-	pgd = pgd_offset(mm, vaddr);
-	if (!pgd_present(*pgd)) {
-		*size = PGDIR_SIZE;
-		return NULL;
-	}
-
-	pud = pud_offset(pgd, vaddr);
-	if (!pud_present(*pud)) {
-		*size = PUD_SIZE;
-		return NULL;
-	}
-	pmd = pmd_offset(pud, vaddr);
-	if (!pmd_present(*pmd)) {
-		*size = PMD_SIZE;
-		return NULL;
-	}
-
-	pte = pte_offset_map(pmd, vaddr);
-	if (!pte_present(*pte)) {
-		*size = PAGE_SIZE;
-		return NULL;
-	}
-	return pte;
-}
-
-static inline pte_t *
-xpmem_vaddr_to_pte(struct mm_struct *mm, u64 vaddr)
-{
-	return xpmem_vaddr_to_pte_offset(mm, vaddr, NULL);
-}
 
 /*
  * general internal driver structures
@@ -316,10 +181,11 @@ struct xpmem_partition {
  */
 struct xpmem_id {
 	pid_t tgid;		/* thread group that owns ID */
-	unsigned short uniq;	/* this value makes the ID unique */
+	unsigned int uniq;	/* this value makes the ID unique */
 };
 
-#define XPMEM_MAX_UNIQ_ID	((1 << (sizeof(short) * 8)) - 1)
+/* Shift INT_MAX by one so we can tell when we overflow. */
+#define XPMEM_MAX_UNIQ_ID	(INT_MAX >> 1)
 
 static inline pid_t
 xpmem_segid_to_tgid(xpmem_segid_t segid)
@@ -351,22 +217,6 @@ xpmem_apid_to_tgid(xpmem_apid_t apid)
 #define	XPMEM_DONT_USE_3		0x40000	/* reserved for xpmem.h */
 #define	XPMEM_DONT_USE_4		0x80000	/* reserved for xpmem.h */
 
-static inline u64
-xpmem_vaddr_to_PFN(struct mm_struct *mm, u64 vaddr)
-{
-	pte_t *pte;
-	u64 pfn, offset;
-
-	pte = xpmem_vaddr_to_pte_offset(mm, vaddr, &offset);
-	if (pte == NULL)
-		return 0;
-	DBUG_ON(!pte_present(*pte));
-
-	pfn = pte_pfn(*pte) + (offset >> PAGE_SHIFT);
-
-	return pfn;
-}
-
 #define XPMEM_NODE_UNINITIALIZED	-1
 #define XPMEM_CPUS_UNINITIALIZED	-1
 #define XPMEM_NODE_OFFLINE		-2
@@ -394,7 +244,8 @@ extern void xpmem_detach_att(struct xpmem_access_permit *,
 extern int xpmem_mmap(struct file *, struct vm_area_struct *);
 
 /* found in xpmem_pfn.c */
-extern int xpmem_ensure_valid_PFN(struct xpmem_segment *, u64, int);
+extern int xpmem_ensure_valid_PFN(struct xpmem_segment *, u64);
+extern u64 xpmem_vaddr_to_PFN(struct mm_struct *mm, u64 vaddr);
 extern int xpmem_block_recall_PFNs(struct xpmem_thread_group *, int);
 extern void xpmem_unpin_pages(struct xpmem_segment *, struct mm_struct *, u64,
 				size_t);

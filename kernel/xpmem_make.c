@@ -38,7 +38,7 @@ xpmem_make_segid(struct xpmem_thread_group *seg_tg)
 
 	*segid_p = 0;
 	segid.tgid = seg_tg->tgid;
-	segid.uniq = (unsigned short)uniq;
+	segid.uniq = (unsigned long)uniq;
 
 	DBUG_ON(*segid_p <= 0);
 	return *segid_p;
@@ -132,6 +132,12 @@ xpmem_remove_seg(struct xpmem_thread_group *seg_tg, struct xpmem_segment *seg)
 	spin_lock(&seg->lock);
 	if (seg->flags & XPMEM_FLAG_DESTROYING) {
 		spin_unlock(&seg->lock);
+		/*
+		 * Force a schedule to possibly yield the cpu. Another
+		 * task is destroying the segment and we want to give
+		 * it a chance to run.
+		 */
+		schedule();
 		return;
 	}
 	seg->flags |= XPMEM_FLAG_DESTROYING;
@@ -177,6 +183,7 @@ xpmem_remove_segs_of_tg(struct xpmem_thread_group *seg_tg)
 		xpmem_seg_deref(seg);
 		read_lock(&seg_tg->seg_list_lock);
 	}
+
 	read_unlock(&seg_tg->seg_list_lock);
 }
 

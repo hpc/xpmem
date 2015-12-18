@@ -186,6 +186,13 @@ xpmem_mmu_release(struct mmu_notifier *mn, struct mm_struct *mm)
 		list_for_each_entry(tg, &xpmem_my_part->tg_hashtable[i].list,
 				    tg_hashlist) {
 			if (tg->mm == mm) {
+				spin_lock(&tg->lock);
+				if (tg->flags & XPMEM_FLAG_DESTROYING) {
+					spin_unlock(&tg->lock);
+					continue;
+				}
+				spin_unlock(&tg->lock);
+
 				xpmem_tg_ref(tg);
 				read_unlock(&xpmem_my_part->tg_hashtable[i].lock);
 				XPMEM_DEBUG("not self: tg->mm=%p", tg->mm);
@@ -236,9 +243,14 @@ xpmem_mmu_notifier_init(struct xpmem_thread_group *tg)
 void
 xpmem_mmu_notifier_unlink(struct xpmem_thread_group *tg)
 {
-	if (tg && tg->mmu_initialized && !tg->mmu_unregister_called) {
-		XPMEM_DEBUG("tg->mm=%p", tg->mm);
-		mmu_notifier_unregister(&tg->mmu_not, tg->mm);
-		tg->mmu_unregister_called = 1;
+	spin_lock(&tg->lock);
+	if (!tg->mmu_initialized || tg->mmu_unregister_called) {
+		spin_unlock(&tg->lock);
+		return;
 	}
+	tg->mmu_unregister_called = 1;
+	spin_unlock(&tg->lock);
+
+	XPMEM_DEBUG("tg->mm=%p", tg->mm);
+	mmu_notifier_unregister(&tg->mmu_not, tg->mm);
 }

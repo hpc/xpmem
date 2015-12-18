@@ -158,18 +158,21 @@ xpmem_destroy_tg(struct xpmem_thread_group *tg)
 	 * Calls MMU release function if exit_mmap() has not executed yet.
 	 * Decrements mm_count.
 	 */
-	mmu_notifier_unregister(&tg->mmu_not, tg->mm);
-
-	/*
-	 * At this point, XPMEM no longer needs to reference the thread group
-	 * leader's task_struct.  Decrement its task 'usage' to account for
-	 * the extra increment previously done in xpmem_open().
-	 */
-	put_task_struct(tg->group_leader);
+	xpmem_mmu_notifier_unlink(tg);
 
 	/* Remove tg structure from its hash list */
 	index = xpmem_tg_hashtable_index(tg->tgid);
 	write_lock(&xpmem_my_part->tg_hashtable[index].lock);
+	/*
+	 * Two threads could have called xpmem_flush at about the same time,
+	 * and thus xpmem_tg_ref_by_tgid_all could return the same tg in
+	 * both threads.  Guard against this race.
+	 */
+	if (list_empty(&tg->tg_hashlist)) {
+		write_unlock(&xpmem_my_part->tg_hashtable[index].lock);
+		xpmem_tg_deref(tg);
+		return;
+	}
 	list_del_init(&tg->tg_hashlist);
 	write_unlock(&xpmem_my_part->tg_hashtable[index].lock);
 
@@ -194,6 +197,11 @@ xpmem_teardown(struct xpmem_thread_group *tg)
 
 	xpmem_release_aps_of_tg(tg);
 	xpmem_remove_segs_of_tg(tg);
+
+	spin_lock(&tg->lock);
+	DBUG_ON(tg->flags & XPMEM_FLAG_DESTROYED);
+	tg->flags |= XPMEM_FLAG_DESTROYED;
+	spin_unlock(&tg->lock);
 
 	/* We don't call xpmem_destroy_tg() here.  We can't call
 	 * mmu_notifier_unregister() when the stack started with a

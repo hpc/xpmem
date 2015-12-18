@@ -81,7 +81,6 @@ xpmem_close_handler(struct vm_area_struct *vma)
 	 */
 	if (vma->vm_start == att->at_vaddr &&
 	    ((vma->vm_end - vma->vm_start) == att->at_size)) {
-
 		att->flags |= XPMEM_FLAG_DESTROYING;
 
 		ap = att->ap;
@@ -207,8 +206,6 @@ xpmem_fault_handler(struct vm_area_struct *vma, struct vm_fault *vmf)
 	 */
 
 	ret = xpmem_seg_down_read(seg_tg, seg, 1, 0);
-
-avoid_deadlock_1:
 	if (ret == -EAGAIN) {
 		/* to avoid possible deadlock drop current->mm->mmap_sem */
 		up_read(&current->mm->mmap_sem);
@@ -219,7 +216,23 @@ avoid_deadlock_1:
 	if (ret != 0)
 		goto out_1;
 
-avoid_deadlock_2:
+	if (seg_tg->mm != current->mm) {
+		/*
+		 * Lock the seg's thread group's mmap_sem in a deadlock
+		 * safe manner. Get the locks in a consistent order by
+		 * getting the smaller address first.
+		 */
+		if (current->mm < seg_tg->mm) {
+			down_read(&seg_tg->mm->mmap_sem);
+		} else if (!down_read_trylock(&seg_tg->mm->mmap_sem)) {
+			up_read(&current->mm->mmap_sem);
+			down_read(&seg_tg->mm->mmap_sem);
+			down_read(&current->mm->mmap_sem);
+			vma_verification_needed = 1;
+		}
+		seg_tg_mmap_sem_locked = 1;
+	}
+
 	/* verify vma hasn't changed due to dropping current->mm->mmap_sem */
 	if (vma_verification_needed) {
 		struct vm_area_struct *retry_vma;
@@ -230,13 +243,11 @@ avoid_deadlock_2:
 		    !xpmem_is_vm_ops_set(retry_vma) ||
 		    retry_vma->vm_private_data != att)
 			goto out_2;
-		vma_verification_needed = 0;
 	}
 
 	if (mutex_lock_killable(&att->mutex))
 		goto out_2;
-	else
-		att_locked = 1;
+        att_locked = 1;
 
 	if ((att->flags & XPMEM_FLAG_DESTROYING) ||
 	    (ap_tg->flags & XPMEM_FLAG_DESTROYING) ||
@@ -247,50 +258,18 @@ avoid_deadlock_2:
 		goto out_2;
 
 	/* translate the fault virtual address to the source virtual address */
-	seg_vaddr = ((u64)att->vaddr & PAGE_MASK) + (vaddr - att->at_vaddr);
+	seg_vaddr = (att->vaddr & PAGE_MASK) + (vaddr - att->at_vaddr);
 	XPMEM_DEBUG("vaddr = %llx, seg_vaddr = %llx", vaddr, seg_vaddr);
 
-	if (!seg_tg_mmap_sem_locked &&
-	    &current->mm->mmap_sem > &seg_tg->mm->mmap_sem) {
-		/*
-		 * The faulting thread's mmap_sem is numerically smaller
-		 * than the seg's thread group's mmap_sem address-wise,
-		 * therefore we need to acquire the latter's mmap_sem in a
-		 * safe manner before calling xpmem_ensure_valid_PFN() to
-		 * avoid a potential deadlock.
-		 */
-		seg_tg_mmap_sem_locked = 1;
-		if (!down_read_trylock(&seg_tg->mm->mmap_sem)) {
-			mutex_unlock(&att->mutex);
-			up_read(&current->mm->mmap_sem);
-			down_read(&seg_tg->mm->mmap_sem);
-			down_read(&current->mm->mmap_sem);
-			vma_verification_needed = 1;
-			goto avoid_deadlock_2;
-		}
-	}
-
-	ret = xpmem_ensure_valid_PFN(seg, seg_vaddr, seg_tg_mmap_sem_locked);
-	if (seg_tg_mmap_sem_locked) {
-		up_read(&seg_tg->mm->mmap_sem);
-		seg_tg_mmap_sem_locked = 0;
-	}
-	if (ret != 0) {
-		if (ret == -EAGAIN) {
-			mutex_unlock(&att->mutex);
-			xpmem_seg_up_read(seg_tg, seg, 1);
-			goto avoid_deadlock_1;
-		}
+        ret = xpmem_ensure_valid_PFN(seg, seg_vaddr);
+        if (ret != 0)
 		goto out_2;
-	}
 
 	pfn = xpmem_vaddr_to_PFN(seg_tg->mm, seg_vaddr);
 
 	att->flags |= XPMEM_FLAG_VALIDPTEs;
 
 out_2:
-	if (seg_tg_mmap_sem_locked)
-		up_read(&seg_tg->mm->mmap_sem);
 	xpmem_seg_up_read(seg_tg, seg, 1);
 out_1:
 	xpmem_ap_deref(ap);
@@ -304,7 +283,7 @@ out_1:
 	 * call remap_pfn_range() with the att->mutex locked and don't
 	 * perform the redundant remap_pfn_range() when a PFN already exists.
 	 */
-	if (pfn_valid(pfn) && pfn > 0) {
+        if (pfn && pfn_valid(pfn)) {
 		old_pfn = xpmem_vaddr_to_PFN(current->mm, vaddr);
 		if (old_pfn) {
 			if (old_pfn == pfn) {
@@ -329,14 +308,16 @@ out_1:
 		}
 	}
 out:
-	xpmem_seg_deref(seg);
-	xpmem_tg_deref(seg_tg);
+	if (seg_tg_mmap_sem_locked)
+		up_read(&seg_tg->mm->mmap_sem);
 
-	if (att_locked) {
+	if (att_locked)
 		mutex_unlock(&att->mutex);
-	}
 
-	/* NTH: Cray had this conditional on att_locked but that seems incorrect */
+	/* NTH: Cray had this conditional on att_locked but that seems incorrect.
+         * Looks like I was correct. Cray fixed this as well. */
+        xpmem_tg_deref(seg_tg);
+        xpmem_seg_deref(seg);
 	xpmem_att_deref(att);
 
 	return ret;
@@ -666,7 +647,6 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 		current->mm = current_mm;
 		return;
 	}
-
 	att->flags |= XPMEM_FLAG_DESTROYING;
 
 	mutex_unlock(&att->invalidate_mutex);

@@ -27,6 +27,140 @@
 #define PDE_DATA(inode)	((PDE(inode)->data))
 #endif
 
+static pte_t *
+xpmem_hugetlb_pte(pte_t *pte, struct mm_struct *mm, u64 vaddr, u64 *offset)
+{
+	struct vm_area_struct *vma;
+	u64 page_size;
+
+	vma = find_vma(mm, vaddr);
+	if (!vma)
+		return NULL;
+
+	if (is_vm_hugetlb_page(vma)) {
+		struct hstate *hs = hstate_vma(vma);
+
+		page_size = huge_page_size(hs);
+
+#ifdef CONFIG_CRAY_MRT
+		/* NTH: not sure what cray's modifications are that require the
+		 * page size here. This seems like an unnecessary second walk
+		 * of the page tables. */
+		pte = huge_pte_offset(mm, address, huge_page_size(hs));
+#endif
+	} else {
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+		/* NTH: transparent hugepages can appear in vma's that do not have
+		 * the VM_HUGETLB flag set. if we are here we know vaddr is in a
+		 * huge page so it must be within a transparent huge page. see
+		 * include/linux/huge_mm.h */
+		page_size = HPAGE_PMD_SIZE;
+#else
+		/*
+		 * We should never enter this area since xpmem_hugetlb_pte() is only
+		 * called if {pgd,pud,pmd}_large() is true
+		 */
+		BUG();
+#endif
+	}
+
+	if (offset) {
+		*offset = (vaddr & (page_size - 1)) & PAGE_MASK;
+	}
+
+	if (pte_none(*pte))
+		return NULL;
+
+	return (pte_t *)pte;
+}
+
+/*
+ * Given an address space and a virtual address return a pointer to its
+ * pte if one is present.
+ */
+static pte_t *
+xpmem_vaddr_to_pte_offset(struct mm_struct *mm, u64 vaddr, u64 *offset)
+{
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+
+	if (offset)
+		/* if vaddr is not in a huge page it will always be at
+		 * offset 0 in the page. */
+		*offset = 0;
+
+	pgd = pgd_offset(mm, vaddr);
+	if (!pgd_present(*pgd))
+		return NULL;
+	/* NTH: there is no pgd_large in kernel 3.13. from what I have read
+	 * the pte is never folded into the pgd. */
+
+	pud = pud_offset(pgd, vaddr);
+	if (!pud_present(*pud))
+		return NULL;
+	else if (pud_large(*pud)) {
+		/* pte folded into the pmd which is folded into the pud */
+		return xpmem_hugetlb_pte((pte_t *) pud, mm, vaddr, offset);
+	}
+
+	pmd = pmd_offset(pud, vaddr);
+	if (!pmd_present(*pmd))
+		return NULL;
+	else if (pmd_large(*pmd)) {
+		/* pte folded into the pmd */
+		return xpmem_hugetlb_pte((pte_t *) pmd, mm, vaddr, offset);
+	}
+
+	pte = pte_offset_map(pmd, vaddr);
+	if (!pte_present(*pte))
+		return NULL;
+
+	return pte;
+}
+
+/*
+ * This is similar to xpmem_vaddr_to_pte_offset, except it should
+ * only be used for areas mapped with base pages. Specifically, it is used
+ * for XPMEM attachments since we know XPMEM created those mappings with base
+ * pages. The size argument is used to determine at which level of the page
+ * tables an invalid entry was found. This is used by xpmem_unpin_pages. size
+ * must always be a valid pointer.
+ */
+static pte_t *
+xpmem_vaddr_to_pte_size(struct mm_struct *mm, u64 vaddr, u64 *size)
+{
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+
+	pgd = pgd_offset(mm, vaddr);
+	if (!pgd_present(*pgd)) {
+		*size = PGDIR_SIZE;
+		return NULL;
+	}
+
+	pud = pud_offset(pgd, vaddr);
+	if (!pud_present(*pud)) {
+		*size = PUD_SIZE;
+		return NULL;
+	}
+	pmd = pmd_offset(pud, vaddr);
+	if (!pmd_present(*pmd)) {
+		*size = PMD_SIZE;
+		return NULL;
+	}
+
+	pte = pte_offset_map(pmd, vaddr);
+	if (!pte_present(*pte)) {
+		*size = PAGE_SIZE;
+		return NULL;
+	}
+	return pte;
+}
+
 /*
  * Fault in and pin a single page for the specified task and mm.
  */
@@ -127,46 +261,41 @@ xpmem_unpin_pages(struct xpmem_segment *seg, struct mm_struct *mm,
 }
 
 /*
- * Given a virtual address and XPMEM segment, grab any locks necessary and
- * pin the page.
+ * Given a virtual address and XPMEM segment, pin the page.
  */
 int
-xpmem_ensure_valid_PFN(struct xpmem_segment *seg, u64 vaddr,
-			int mmap_sem_prelocked)
+xpmem_ensure_valid_PFN(struct xpmem_segment *seg, u64 vaddr)
 {
-	int ret = -1, mmap_sem_locked = 0;
+  int ret;
 	struct xpmem_thread_group *seg_tg = seg->tg;
 
-	/*
-	 * If we're faulting a page in our own address space, we don't have to
-	 * grab the mmap_sem since we already have it via do_page_fault(). If
-	 * we're faulting a page from another address space, there is a
-	 * potential for a deadlock on the mmap_sem. If the fault handler
-	 * detects this potential, it acquires the two mmap_sems in numeric
-	 * order (address-wise).
-	 */
-	if (seg_tg->mm != current->mm) {
-		if (!mmap_sem_prelocked) {
-			down_read(&seg_tg->mm->mmap_sem);
-			mmap_sem_locked = 1;
-		}
-	}
-
 	/* the seg may have been marked for destruction while we were down() */
-	if (seg->flags & XPMEM_FLAG_DESTROYING) {
-		if (mmap_sem_locked)
-			up_read(&seg_tg->mm->mmap_sem);
+        if (seg->flags & XPMEM_FLAG_DESTROYING)
 		return -ENOENT;
-	}
 
 	/* pin PFN */
-	ret = xpmem_pin_page(seg->tg, seg_tg->group_leader,
-	                     seg_tg->mm, vaddr);
-
-	if (mmap_sem_locked)
-		up_read(&seg_tg->mm->mmap_sem);
+        ret = xpmem_pin_page(seg_tg, seg_tg->group_leader, seg_tg->mm, vaddr);
 
 	return ret;
+}
+
+/*
+ * Return the PFN for a given virtual address.
+ */
+u64
+xpmem_vaddr_to_PFN(struct mm_struct *mm, u64 vaddr)
+{
+	pte_t *pte;
+	u64 pfn, offset;
+
+	pte = xpmem_vaddr_to_pte_offset(mm, vaddr, &offset);
+	if (pte == NULL)
+		return 0;
+	DBUG_ON(!pte_present(*pte));
+
+	pfn = pte_pfn(*pte) + (offset >> PAGE_SHIFT);
+
+	return pfn;
 }
 
 /*

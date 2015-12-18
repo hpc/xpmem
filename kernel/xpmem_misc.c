@@ -17,6 +17,7 @@
 #include <linux/uaccess.h>
 #include <xpmem.h>
 #include "xpmem_private.h"
+#include <linux/module.h>
 
 uint32_t xpmem_debug_on = 0;
 
@@ -95,8 +96,15 @@ xpmem_tg_deref(struct xpmem_thread_group *tg)
 	 * Process has been removed from lookup lists and is no
 	 * longer being referenced, so it is safe to remove it.
 	 */
-	DBUG_ON(!(tg->flags & XPMEM_FLAG_DESTROYING));
+        DBUG_ON(!(tg->flags & XPMEM_FLAG_DESTROYED));
 	DBUG_ON(!list_empty(&tg->seg_list));
+
+	/*
+	 * At this point, XPMEM no longer needs to reference the thread group
+	 * leader's task_struct.  Decrement its task 'usage' to account for
+	 * the extra increment previously done in xpmem_open().
+	 */
+	put_task_struct(tg->group_leader);
 
 	snprintf(tgid_string, XPMEM_TGID_STRING_LEN, "%d", tg->tgid);
 	spin_lock(&xpmem_unpin_procfs_lock);

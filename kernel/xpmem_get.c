@@ -86,7 +86,7 @@ xpmem_make_apid(struct xpmem_thread_group *ap_tg)
 
 	*apid_p = 0;
 	apid.tgid = ap_tg->tgid;
-	apid.uniq = (unsigned short)uniq;
+	apid.uniq = (unsigned int)uniq;
 	return *apid_p;
 }
 
@@ -214,6 +214,12 @@ xpmem_release_ap(struct xpmem_thread_group *ap_tg,
 	spin_lock(&ap->lock);
 	if (ap->flags & XPMEM_FLAG_DESTROYING) {
 		spin_unlock(&ap->lock);
+		/*
+		 * Force a schedule to possibly yield the cpu. Another
+		 * task is destroying the permit and we want to give
+		 * it a chance to run.
+		 */
+		schedule();
 		return;
 	}
 	ap->flags |= XPMEM_FLAG_DESTROYING;
@@ -224,11 +230,14 @@ xpmem_release_ap(struct xpmem_thread_group *ap_tg,
 				 att_list);
 		xpmem_att_ref(att);
 		spin_unlock(&ap->lock);
+
 		xpmem_detach_att(ap, att);
 		DBUG_ON(atomic_read(&att->mm->mm_count) <= 0);
+
 		xpmem_att_deref(att);
 		spin_lock(&ap->lock);
 	}
+
 	ap->flags |= XPMEM_FLAG_DESTROYED;
 	spin_unlock(&ap->lock);
 
