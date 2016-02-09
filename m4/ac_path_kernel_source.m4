@@ -2,6 +2,7 @@
 ## additional m4 macros
 ##
 ## (C) 1999 Christoph Bartelmus (lirc@bartelmus.de)
+## (C) 2016 Nathan Hjelm
 ##
 
 
@@ -16,12 +17,12 @@ AC_DEFUN([AC_PATH_KERNEL_SOURCE_SEARCH],
   if test `uname` != "Linux"; then
     kerneldir="not running Linux"
   else
-    shortvers="$( uname -r | sed -r 's/(@<:@2-9@:>@\.@<:@0-9@:>@+).*/\1/' )"
+    vers="$(uname -r)"
     for dir in ${ac_kerneldir} \
+        /lib/modules/${vers}/build \
         /usr/src/kernel-source-* \
-        /usr/src/linux-source-* \
-        /usr/src/linux /lib/modules/*/source \
-        /lib/modules/*/build
+        /usr/src/linux-source-${vers} \
+        /usr/src/linux /lib/modules/${vers}/source
     do
       if test -e $dir/Module.symvers ; then
         kerneldir=`dirname $dir/Makefile`/ || continue
