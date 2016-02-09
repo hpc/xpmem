@@ -5,7 +5,7 @@
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2010,2012 Cray Inc. All Rights Reserved
- * Copyright (c) 2014-2015 Los Alamos National Security, LLC. All rights
+ * Copyright (c) 2014-2016 Los Alamos National Security, LLC. All rights
  *                         reserved.
  */
 
@@ -55,13 +55,13 @@ xpmem_close_handler(struct vm_area_struct *vma)
 	struct xpmem_access_permit *ap;
 	struct xpmem_attachment *att;
 
-	XPMEM_DEBUG("cleaning up");
-	
 	att = (struct xpmem_attachment *)vma->vm_private_data;
 	if (att == NULL) {
 		/* can happen if a user tries to mmap /dev/xpmem directly */
 		return;
 	}
+
+	XPMEM_DEBUG("cleaning up vma with range: 0x%lx - 0x%lx", vma->vm_start, vma->vm_end);
 
 	xpmem_att_ref(att);
 	mutex_lock(&att->mutex);
@@ -619,22 +619,18 @@ void
 xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 {
 	struct vm_area_struct *vma;
-	struct mm_struct *current_mm;
+	struct mm_struct *mm;
 	int ret;
 
 
 	XPMEM_DEBUG("detaching attr %p. current->mm = %p, att->mm = %p", att,
 		    (void *) current->mm, (void *) att->mm);
 
-	/* must lock mmap_sem before att's sema to prevent deadlock */
-	down_write(&att->mm->mmap_sem);
-	mutex_lock(&att->mutex);
+	mm = current->mm ? current->mm : att->mm;
 
-	/* store a copy of the current mm */
-	current_mm = current->mm;
-	if (NULL == current_mm) {
-		current->mm = att->mm;
-	}
+	/* must lock mmap_sem before att's sema to prevent deadlock */
+	down_write(&mm->mmap_sem);
+	mutex_lock(&att->mutex);
 
 	/* ensure we aren't racing with MMU notifier PTE cleanup */
 	mutex_lock(&att->invalidate_mutex);
@@ -642,9 +638,7 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	if (att->flags & XPMEM_FLAG_DESTROYING) {
 		mutex_unlock(&att->invalidate_mutex);
 		mutex_unlock(&att->mutex);
-		up_write(&current->mm->mmap_sem);
-		/* restore the current mm */
-		current->mm = current_mm;
+		up_write(&mm->mmap_sem);
 		return;
 	}
 	att->flags |= XPMEM_FLAG_DESTROYING;
@@ -652,20 +646,18 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	mutex_unlock(&att->invalidate_mutex);
 
 	/* find the corresponding vma */
-	vma = find_vma(current->mm, att->at_vaddr);
+	vma = find_vma(mm, att->at_vaddr);
 	if (!vma || vma->vm_start > att->at_vaddr) {
 		DBUG_ON(1);
 		mutex_unlock(&att->mutex);
-		up_write(&current->mm->mmap_sem);
-		/* restore the current mm */
-		current->mm = current_mm;
+		up_write(&mm->mmap_sem);
 		return;
 	}
 	DBUG_ON(!xpmem_is_vm_ops_set(vma));
 	DBUG_ON((vma->vm_end - vma->vm_start) != att->at_size);
 	DBUG_ON(vma->vm_private_data != att);
 
-	xpmem_unpin_pages(ap->seg, current->mm, att->at_vaddr, att->at_size);
+	xpmem_unpin_pages(ap->seg, mm, att->at_vaddr, att->at_size);
 
 	vma->vm_private_data = NULL;
 
@@ -675,14 +667,17 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	list_del_init(&att->att_list);
 	spin_unlock(&ap->lock);
 
-	/* NTH: drop the semaphoe before calling vm_munmap */
-	up_write(&current->mm->mmap_sem);
+	/* NTH: drop the semaphore and attachment lock before calling vm_munmap */
 	mutex_unlock(&att->mutex);
+	up_write(&mm->mmap_sem);
 
-	ret = vm_munmap(vma->vm_start, att->at_size);
-	/* restore the current mm */
-	current->mm = current_mm;
-	DBUG_ON(ret != 0);
+	/* NTH: if the current task does not have a memory descriptor
+	 * then there is nothing more to do. the memory mapping should
+	 * go away automatically when the memory descriptor does. */
+	if (NULL != current->mm) {
+		ret = vm_munmap(vma->vm_start, att->at_size);
+		DBUG_ON(ret != 0);
+	}
 
 	xpmem_att_destroyable(att);
 }
@@ -756,10 +751,8 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 		 * space and find the intersection with (start, end).
 		 */
 		invalidate_start = max(start, att->vaddr);
-		if (invalidate_start >= att_vaddr_end)
-			goto out;
 		invalidate_end = min(end, att_vaddr_end);
-		if (invalidate_end <= att->vaddr)
+		if (invalidate_start >= att_vaddr_end || invalidate_end <= att->vaddr)
 			goto out;
 
 		/* Convert the intersection of vaddr into offsets. */
