@@ -5,7 +5,7 @@
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2009, 2010, 2014 Cray Inc. All Rights Reserved
- * Copyright (c) 2014-2015 Los Alamos National Security, LCC. All rights
+ * Copyright (c) 2014-2016 Los Alamos National Security, LCC. All rights
  *                         reserved.
  */
 
@@ -86,6 +86,73 @@ extern uint32_t xpmem_debug_on;
 #define delayed_work work_struct
 
 /*
+ * Both the xpmem_segid_t and xpmem_apid_t are of type __s64 and designed
+ * to be opaque to the user. Both consist of the same underlying fields.
+ *
+ * The 'uniq' field is designed to give each segid or apid a unique value.
+ * Each type is only unique with respect to itself.
+ *
+ * An ID is never less than or equal to zero.
+ */
+struct xpmem_id {
+	pid_t tgid;		/* thread group that owns ID */
+	unsigned int uniq;	/* this value makes the ID unique */
+};
+
+/* Shift INT_MAX by one so we can tell when we overflow. */
+#define XPMEM_MAX_UNIQ_ID	(INT_MAX >> 1)
+
+static inline pid_t
+xpmem_segid_to_tgid(xpmem_segid_t segid)
+{
+	DBUG_ON(segid <= 0);
+	return ((struct xpmem_id *)&segid)->tgid;
+}
+
+static inline pid_t
+xpmem_apid_to_tgid(xpmem_apid_t apid)
+{
+	DBUG_ON(apid <= 0);
+	return ((struct xpmem_id *)&apid)->tgid;
+}
+
+/*
+ * Hash Tables
+ *
+ * XPMEM utilizes hash tables to enable faster lookups of list entries.
+ * These hash tables are implemented as arrays. A simple modulus of the hash
+ * key yields the appropriate array index. A hash table's array element (i.e.,
+ * hash table bucket) consists of a hash list and the lock that protects it.
+ *
+ * XPMEM has the following two hash tables:
+ *
+ * table		bucket					key
+ * part->tg_hashtable	list of struct xpmem_thread_group	tgid
+ * tg->ap_hashtable	list of struct xpmem_access_permit	apid.uniq
+ */
+
+struct xpmem_hashlist {
+	rwlock_t lock;		/* lock for hash list */
+	struct list_head list;	/* hash list */
+} ____cacheline_aligned;
+
+#define XPMEM_TG_HASHTABLE_SIZE	8
+#define XPMEM_AP_HASHTABLE_SIZE	8
+
+static inline int
+xpmem_tg_hashtable_index(pid_t tgid)
+{
+	return ((unsigned int)tgid % XPMEM_TG_HASHTABLE_SIZE);
+}
+
+static inline int
+xpmem_ap_hashtable_index(xpmem_apid_t apid)
+{
+	DBUG_ON(apid <= 0);
+	return (((struct xpmem_id *)&apid)->uniq % XPMEM_AP_HASHTABLE_SIZE);
+}
+
+/*
  * general internal driver structures
  */
 
@@ -104,7 +171,6 @@ struct xpmem_thread_group {
 	atomic_t uniq_apid;
 	rwlock_t seg_list_lock;
 	struct list_head seg_list;	/* tg's list of segs */
-	struct xpmem_hashlist *ap_hashtable;	/* locks + ap hash lists */
 	atomic_t refcnt;	/* references to tg */
 	atomic_t n_pinned;	/* #of pages pinned by this tg */
 	u64 addr_limit;		/* highest possible user addr */
@@ -118,6 +184,8 @@ struct xpmem_thread_group {
 	struct mmu_notifier mmu_not;	/* tg's mmu notifier struct */
 	int mmu_initialized;	/* registered for mmu callbacks? */
 	int mmu_unregister_called;
+
+        struct xpmem_hashlist ap_hashtable[];	/* locks + ap hash lists */
 };
 
 struct xpmem_segment {
@@ -164,43 +232,12 @@ struct xpmem_attachment {
 };
 
 struct xpmem_partition {
-	struct xpmem_hashlist *tg_hashtable;	/* locks + tg hash lists */
-
 	/* procfs debugging */
 	atomic_t n_pinned; 	/* # of pages pinned xpmem */
 	atomic_t n_unpinned; 	/* # of pages unpinned by xpmem */
+
+	struct xpmem_hashlist tg_hashtable[];	/* locks + tg hash lists */
 };
-
-/*
- * Both the xpmem_segid_t and xpmem_apid_t are of type __s64 and designed
- * to be opaque to the user. Both consist of the same underlying fields.
- *
- * The 'uniq' field is designed to give each segid or apid a unique value.
- * Each type is only unique with respect to itself.
- *
- * An ID is never less than or equal to zero.
- */
-struct xpmem_id {
-	pid_t tgid;		/* thread group that owns ID */
-	unsigned int uniq;	/* this value makes the ID unique */
-};
-
-/* Shift INT_MAX by one so we can tell when we overflow. */
-#define XPMEM_MAX_UNIQ_ID	(INT_MAX >> 1)
-
-static inline pid_t
-xpmem_segid_to_tgid(xpmem_segid_t segid)
-{
-	DBUG_ON(segid <= 0);
-	return ((struct xpmem_id *)&segid)->tgid;
-}
-
-static inline pid_t
-xpmem_apid_to_tgid(xpmem_apid_t apid)
-{
-	DBUG_ON(apid <= 0);
-	return ((struct xpmem_id *)&apid)->tgid;
-}
 
 /*
  * Attribute and state flags for various xpmem structures. Some values
@@ -410,42 +447,6 @@ xpmem_wait_for_seg_destroyed(struct xpmem_segment *seg)
 	wait_event(seg->destroyed_wq, ((seg->flags & XPMEM_FLAG_DESTROYED) ||
 				       !(seg->flags & (XPMEM_FLAG_DESTROYING |
 						       XPMEM_FLAG_RECALLINGPFNS))));
-}
-
-/*
- * Hash Tables
- *
- * XPMEM utilizes hash tables to enable faster lookups of list entries.
- * These hash tables are implemented as arrays. A simple modulus of the hash
- * key yields the appropriate array index. A hash table's array element (i.e.,
- * hash table bucket) consists of a hash list and the lock that protects it.
- *
- * XPMEM has the following two hash tables:
- *
- * table		bucket					key
- * part->tg_hashtable	list of struct xpmem_thread_group	tgid
- * tg->ap_hashtable	list of struct xpmem_access_permit	apid.uniq
- */
-
-struct xpmem_hashlist {
-	rwlock_t lock;		/* lock for hash list */
-	struct list_head list;	/* hash list */
-} ____cacheline_aligned;
-
-#define XPMEM_TG_HASHTABLE_SIZE	8
-#define XPMEM_AP_HASHTABLE_SIZE	8
-
-static inline int
-xpmem_tg_hashtable_index(pid_t tgid)
-{
-	return ((unsigned int)tgid % XPMEM_TG_HASHTABLE_SIZE);
-}
-
-static inline int
-xpmem_ap_hashtable_index(xpmem_apid_t apid)
-{
-	DBUG_ON(apid <= 0);
-	return (((struct xpmem_id *)&apid)->uniq % XPMEM_AP_HASHTABLE_SIZE);
 }
 
 #endif /* _XPMEM_PRIVATE_H */

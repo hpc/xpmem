@@ -5,7 +5,7 @@
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2010, 2014 Cray Inc. All Rights Reserved
- * Copyright 2015 Los Alamos National Security, LLC. All rights reserved.
+ * Copyright 2015-2016 Los Alamos National Security, LLC. All rights reserved.
  */
 
 /*
@@ -67,7 +67,9 @@ xpmem_open(struct inode *inode, struct file *file)
 	}
 
 	/* create tg */
-	tg = kzalloc(sizeof(struct xpmem_thread_group), GFP_KERNEL);
+	tg = kzalloc(sizeof(struct xpmem_thread_group) +
+		     sizeof(struct xpmem_hashlist) *
+		     XPMEM_AP_HASHTABLE_SIZE, GFP_KERNEL);
 	if (tg == NULL) {
 		spin_unlock(&xpmem_open_lock);
 		return -ENOMEM;
@@ -92,25 +94,16 @@ xpmem_open(struct inode *inode, struct file *file)
 	tg->mmu_unregister_called = 0;
 	tg->mm = current->mm;
 
+	for (index = 0; index < XPMEM_AP_HASHTABLE_SIZE; index++) {
+		rwlock_init(&tg->ap_hashtable[index].lock);
+		INIT_LIST_HEAD(&tg->ap_hashtable[index].list);
+	}
+
 	/* Register MMU notifier callbacks */
 	if (xpmem_mmu_notifier_init(tg) != 0) {
 		spin_unlock(&xpmem_open_lock);
 		kfree(tg);
 		return -EFAULT;
-	}
-
-	/* create and initialize struct xpmem_access_permit hashtable */
-	tg->ap_hashtable = kzalloc(sizeof(struct xpmem_hashlist) *
-				     XPMEM_AP_HASHTABLE_SIZE, GFP_KERNEL);
-	if (tg->ap_hashtable == NULL) {
-		spin_unlock(&xpmem_open_lock);
-		xpmem_mmu_notifier_unlink(tg);
-		kfree(tg);
-		return -ENOMEM;
-	}
-	for (index = 0; index < XPMEM_AP_HASHTABLE_SIZE; index++) {
-		rwlock_init(&tg->ap_hashtable[index].lock);
-		INIT_LIST_HEAD(&tg->ap_hashtable[index].list);
 	}
 
 	snprintf(tgid_string, XPMEM_TGID_STRING_LEN, "%d", current->tgid);
@@ -409,16 +402,11 @@ xpmem_init(void)
 	struct proc_dir_entry *debug_printk_entry;
 
 	/* create and initialize struct xpmem_partition array */
-	xpmem_my_part = kzalloc(sizeof(struct xpmem_partition), GFP_KERNEL);
+	xpmem_my_part = kzalloc(sizeof(struct xpmem_partition) +
+				sizeof(struct xpmem_hashlist) *
+				XPMEM_TG_HASHTABLE_SIZE, GFP_KERNEL);
 	if (xpmem_my_part == NULL)
 		return -ENOMEM;
-
-	xpmem_my_part->tg_hashtable = kzalloc(sizeof(struct xpmem_hashlist) *
-					XPMEM_TG_HASHTABLE_SIZE, GFP_KERNEL);
-	if (xpmem_my_part->tg_hashtable == NULL) {
-		kfree(xpmem_my_part);
-		return -ENOMEM;
-	}
 
 	for (i = 0; i < XPMEM_TG_HASHTABLE_SIZE; i++) {
 		rwlock_init(&xpmem_my_part->tg_hashtable[i].lock);
@@ -472,7 +460,6 @@ out_3:
 out_2:
 	remove_proc_entry(XPMEM_MODULE_NAME, NULL);
 out_1:
-	kfree(xpmem_my_part->tg_hashtable);
 	kfree(xpmem_my_part);
 	return ret;
 }
@@ -483,7 +470,6 @@ out_1:
 void __exit
 xpmem_exit(void)
 {
-	kfree(xpmem_my_part->tg_hashtable);
 	kfree(xpmem_my_part);
 
 	misc_deregister(&xpmem_dev_handle);

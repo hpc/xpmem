@@ -111,8 +111,6 @@ xpmem_tg_deref(struct xpmem_thread_group *tg)
 	remove_proc_entry(tgid_string, xpmem_unpin_procfs_dir);
 	spin_unlock(&xpmem_unpin_procfs_lock);
 
-	kfree(tg->ap_hashtable);
-
 	kfree(tg);
 }
 
