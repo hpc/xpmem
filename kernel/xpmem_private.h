@@ -56,6 +56,8 @@
  *     2.6    CRAY: rearrange/clean-up code for easier debugging
  *     2.6.1  Merge with latest Cray version (2.4->2.6)
  *     2.6.2  Fix race in xpmem_open
+ *     2.6.3  Fix bugs introduced in 2.6.2 that worked with 3.x but
+ *            not 4.x kernels.
  *
  * This int constant has the following format:
  *
@@ -66,8 +68,8 @@
  *       major - major revision number (12-bits)
  *       minor - minor revision number (16-bits)
  */
-#define XPMEM_CURRENT_VERSION		0x00026002
-#define XPMEM_CURRENT_VERSION_STRING	"2.6.2"
+#define XPMEM_CURRENT_VERSION		0x00026003
+#define XPMEM_CURRENT_VERSION_STRING	"2.6.3"
 
 #define XPMEM_MODULE_NAME "xpmem"
 

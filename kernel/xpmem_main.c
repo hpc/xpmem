@@ -446,9 +446,7 @@ xpmem_init(void)
 		goto out_4;
 	}
 
-	spin_lock_init (&xpmem_open_lock);
-
-	printk("SGI XPMEM kernel module v%s loaded\n",
+	printk("XPMEM kernel module v%s loaded\n",
 	       XPMEM_CURRENT_VERSION_STRING);
 	return 0;
 
@@ -476,7 +474,7 @@ xpmem_exit(void)
 	remove_proc_entry("debug_printk", xpmem_unpin_procfs_dir);
 	remove_proc_entry(XPMEM_MODULE_NAME, NULL);
 
-	printk("SGI XPMEM kernel module v%s unloaded\n",
+	printk("XPMEM kernel module v%s unloaded\n",
 	       XPMEM_CURRENT_VERSION_STRING);
 }
 
