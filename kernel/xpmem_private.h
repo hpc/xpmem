@@ -300,9 +300,27 @@ extern struct xpmem_partition *xpmem_my_part;
 void xpmem_teardown(struct xpmem_thread_group *tg);
 
 /* found in xpmem_misc.c */
-extern struct xpmem_thread_group *__xpmem_tg_ref_by_tgid(pid_t, int);
-#define xpmem_tg_ref_by_tgid(t)                __xpmem_tg_ref_by_tgid(t, 0)
-#define xpmem_tg_ref_by_tgid_all(t)    __xpmem_tg_ref_by_tgid(t, 1)
+extern struct xpmem_thread_group *
+__xpmem_tg_ref_by_tgid_nolock_internal(pid_t tgid, int index, int return_destroying);
+static inline struct xpmem_thread_group *__xpmem_tg_ref_by_tgid(pid_t tgid, int return_destroying) {
+	struct xpmem_thread_group *tg;
+	int index;
+
+	index = xpmem_tg_hashtable_index(tgid);
+	read_lock(&xpmem_my_part->tg_hashtable[index].lock);
+	tg = __xpmem_tg_ref_by_tgid_nolock_internal (tgid, index, return_destroying);
+	read_unlock(&xpmem_my_part->tg_hashtable[index].lock);
+	return tg;
+}
+
+static inline struct xpmem_thread_group *__xpmem_tg_ref_by_tgid_nolock(pid_t tgid, int return_destroying) {
+	return __xpmem_tg_ref_by_tgid_nolock_internal (tgid, xpmem_tg_hashtable_index(tgid),
+						       return_destroying);
+}
+#define xpmem_tg_ref_by_tgid(t)               __xpmem_tg_ref_by_tgid(t, 0)
+#define xpmem_tg_ref_by_tgid_all(t)           __xpmem_tg_ref_by_tgid(t, 1)
+#define xpmem_tg_ref_by_tgid_nolock(t)        __xpmem_tg_ref_by_tgid_nolock(t, 0)
+#define xpmem_tg_ref_by_tgid_all_nolock(t)    __xpmem_tg_ref_by_tgid_nolock(t, 1)
 extern struct xpmem_thread_group *xpmem_tg_ref_by_segid(xpmem_segid_t);
 extern struct xpmem_thread_group *xpmem_tg_ref_by_apid(xpmem_apid_t);
 extern void xpmem_tg_deref(struct xpmem_thread_group *);
