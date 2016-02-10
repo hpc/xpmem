@@ -5,7 +5,7 @@
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2010, 2014 Cray Inc. All Rights Reserved
- * Copyright 2015 Los Alamos National Security, LLC. All rights reserved.
+ * Copyright 2015-2016 Los Alamos National Security, LLC. All rights reserved.
  */
 
 /*
@@ -42,7 +42,7 @@
 #endif
 
 struct xpmem_partition *xpmem_my_part = NULL;  /* pointer to this partition */
-static spinlock_t xpmem_open_lock;
+static void xpmem_destroy_tg(struct xpmem_thread_group *tg);
 
 /*
  * User open of the XPMEM driver. Called whenever /dev/xpmem is opened.
@@ -57,19 +57,18 @@ xpmem_open(struct inode *inode, struct file *file)
 	struct proc_dir_entry *unpin_entry;
 	char tgid_string[XPMEM_TGID_STRING_LEN];
 
-	spin_lock(&xpmem_open_lock);
 	/* if this has already been done, just return silently */
 	tg = xpmem_tg_ref_by_tgid(current->tgid);
 	if (!IS_ERR(tg)) {
-		spin_unlock(&xpmem_open_lock);
 		xpmem_tg_deref(tg);
 		return 0;
 	}
 
 	/* create tg */
-	tg = kzalloc(sizeof(struct xpmem_thread_group), GFP_KERNEL);
+	tg = kzalloc(sizeof(struct xpmem_thread_group) +
+		     sizeof(struct xpmem_hashlist) *
+		     XPMEM_AP_HASHTABLE_SIZE, GFP_KERNEL);
 	if (tg == NULL) {
-		spin_unlock(&xpmem_open_lock);
 		return -ENOMEM;
 	}
 
@@ -92,25 +91,15 @@ xpmem_open(struct inode *inode, struct file *file)
 	tg->mmu_unregister_called = 0;
 	tg->mm = current->mm;
 
-	/* Register MMU notifier callbacks */
-	if (xpmem_mmu_notifier_init(tg) != 0) {
-		spin_unlock(&xpmem_open_lock);
-		kfree(tg);
-		return -EFAULT;
-	}
-
-	/* create and initialize struct xpmem_access_permit hashtable */
-	tg->ap_hashtable = kzalloc(sizeof(struct xpmem_hashlist) *
-				     XPMEM_AP_HASHTABLE_SIZE, GFP_KERNEL);
-	if (tg->ap_hashtable == NULL) {
-		spin_unlock(&xpmem_open_lock);
-		xpmem_mmu_notifier_unlink(tg);
-		kfree(tg);
-		return -ENOMEM;
-	}
 	for (index = 0; index < XPMEM_AP_HASHTABLE_SIZE; index++) {
 		rwlock_init(&tg->ap_hashtable[index].lock);
 		INIT_LIST_HEAD(&tg->ap_hashtable[index].list);
+	}
+
+	/* Register MMU notifier callbacks */
+	if (xpmem_mmu_notifier_init(tg) != 0) {
+		kfree(tg);
+		return -EFAULT;
 	}
 
 	snprintf(tgid_string, XPMEM_TGID_STRING_LEN, "%d", current->tgid);
@@ -145,7 +134,6 @@ xpmem_open(struct inode *inode, struct file *file)
 	get_task_struct(current->group_leader);
 	tg->group_leader = current->group_leader;
 	BUG_ON(current->mm != current->group_leader->mm);
-	spin_unlock(&xpmem_open_lock);
 
 	return 0;
 }
@@ -158,9 +146,6 @@ xpmem_open(struct inode *inode, struct file *file)
 static void
 xpmem_destroy_tg(struct xpmem_thread_group *tg)
 {
-	int index;
-
-	spin_lock(&xpmem_open_lock);
 	XPMEM_DEBUG("tg->mm=%p", tg->mm);
 
 	/*
@@ -168,27 +153,8 @@ xpmem_destroy_tg(struct xpmem_thread_group *tg)
 	 * Decrements mm_count.
 	 */
 	xpmem_mmu_notifier_unlink(tg);
-
-	/* Remove tg structure from its hash list */
-	index = xpmem_tg_hashtable_index(tg->tgid);
-	write_lock(&xpmem_my_part->tg_hashtable[index].lock);
-	/*
-	 * Two threads could have called xpmem_flush at about the same time,
-	 * and thus xpmem_tg_ref_by_tgid_all could return the same tg in
-	 * both threads.  Guard against this race.
-	 */
-	if (list_empty(&tg->tg_hashlist)) {
-		write_unlock(&xpmem_my_part->tg_hashtable[index].lock);
-		xpmem_tg_deref(tg);
-		spin_unlock(&xpmem_open_lock);
-		return;
-	}
-	list_del_init(&tg->tg_hashlist);
-	write_unlock(&xpmem_my_part->tg_hashtable[index].lock);
-
 	xpmem_tg_destroyable(tg);
 	xpmem_tg_deref(tg);
-	spin_unlock(&xpmem_open_lock);
 }
 
 /*
@@ -230,7 +196,9 @@ xpmem_teardown(struct xpmem_thread_group *tg)
 static int
 xpmem_flush(struct file *file, fl_owner_t owner)
 {
+	char tgid_string[XPMEM_TGID_STRING_LEN];
 	struct xpmem_thread_group *tg;
+	int index;
 
 	/*
 	 * During a call to fork() there is a check for whether the parent
@@ -249,8 +217,18 @@ xpmem_flush(struct file *file, fl_owner_t owner)
 	if (current->files && current->files != owner)
 		return 0;
 
-	tg = xpmem_tg_ref_by_tgid_all(current->tgid);
+	/*
+	 * Two threads could have called xpmem_flush at about the same time,
+	 * and thus xpmem_tg_ref_by_tgid_all could return the same tg in
+	 * both threads.  Guard against this race.
+	 */
+	index = xpmem_tg_hashtable_index(current->tgid);
+	write_lock(&xpmem_my_part->tg_hashtable[index].lock);
+
+	/* Remove tg structure from its hash list */
+	tg = xpmem_tg_ref_by_tgid_all_nolock(current->tgid);
 	if (IS_ERR(tg)) {
+		write_unlock(&xpmem_my_part->tg_hashtable[index].lock);
 		/*
 		 * xpmem_flush() can get called twice for thread groups
 		 * which inherited /dev/xpmem: once for the inherited fd,
@@ -261,7 +239,21 @@ xpmem_flush(struct file *file, fl_owner_t owner)
 		return 0;
 	}
 
+	list_del_init(&tg->tg_hashlist);
+
+	write_unlock(&xpmem_my_part->tg_hashtable[index].lock);
+
 	XPMEM_DEBUG("tg->mm=%p", tg->mm);
+
+	/*
+	 * NTH: the thread group may not be released until later so remove the
+	 * proc entry now to avoid a race between another call to xpmem_open()
+	 * and the distruction of the thread group object.
+	 */
+	snprintf(tgid_string, XPMEM_TGID_STRING_LEN, "%d", tg->tgid);
+	spin_lock(&xpmem_unpin_procfs_lock);
+	remove_proc_entry(tgid_string, xpmem_unpin_procfs_dir);
+	spin_unlock(&xpmem_unpin_procfs_lock);
 
 	xpmem_destroy_tg(tg);
 
@@ -409,16 +401,11 @@ xpmem_init(void)
 	struct proc_dir_entry *debug_printk_entry;
 
 	/* create and initialize struct xpmem_partition array */
-	xpmem_my_part = kzalloc(sizeof(struct xpmem_partition), GFP_KERNEL);
+	xpmem_my_part = kzalloc(sizeof(struct xpmem_partition) +
+				sizeof(struct xpmem_hashlist) *
+				XPMEM_TG_HASHTABLE_SIZE, GFP_KERNEL);
 	if (xpmem_my_part == NULL)
 		return -ENOMEM;
-
-	xpmem_my_part->tg_hashtable = kzalloc(sizeof(struct xpmem_hashlist) *
-					XPMEM_TG_HASHTABLE_SIZE, GFP_KERNEL);
-	if (xpmem_my_part->tg_hashtable == NULL) {
-		kfree(xpmem_my_part);
-		return -ENOMEM;
-	}
 
 	for (i = 0; i < XPMEM_TG_HASHTABLE_SIZE; i++) {
 		rwlock_init(&xpmem_my_part->tg_hashtable[i].lock);
@@ -459,9 +446,7 @@ xpmem_init(void)
 		goto out_4;
 	}
 
-	spin_lock_init (&xpmem_open_lock);
-
-	printk("SGI XPMEM kernel module v%s loaded\n",
+	printk("XPMEM kernel module v%s loaded\n",
 	       XPMEM_CURRENT_VERSION_STRING);
 	return 0;
 
@@ -472,7 +457,6 @@ out_3:
 out_2:
 	remove_proc_entry(XPMEM_MODULE_NAME, NULL);
 out_1:
-	kfree(xpmem_my_part->tg_hashtable);
 	kfree(xpmem_my_part);
 	return ret;
 }
@@ -483,7 +467,6 @@ out_1:
 void __exit
 xpmem_exit(void)
 {
-	kfree(xpmem_my_part->tg_hashtable);
 	kfree(xpmem_my_part);
 
 	misc_deregister(&xpmem_dev_handle);
@@ -491,7 +474,7 @@ xpmem_exit(void)
 	remove_proc_entry("debug_printk", xpmem_unpin_procfs_dir);
 	remove_proc_entry(XPMEM_MODULE_NAME, NULL);
 
-	printk("SGI XPMEM kernel module v%s unloaded\n",
+	printk("XPMEM kernel module v%s unloaded\n",
 	       XPMEM_CURRENT_VERSION_STRING);
 }
 

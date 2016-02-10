@@ -32,13 +32,9 @@ uint32_t xpmem_debug_on = 0;
  * XPMEM_FLAG_DESTROYING.
  */
 struct xpmem_thread_group *
-__xpmem_tg_ref_by_tgid(pid_t tgid, int return_destroying)
+__xpmem_tg_ref_by_tgid_nolock_internal(pid_t tgid, int index, int return_destroying)
 {
-	int index;
 	struct xpmem_thread_group *tg;
-
-	index = xpmem_tg_hashtable_index(tgid);
-	read_lock(&xpmem_my_part->tg_hashtable[index].lock);
 
 	list_for_each_entry(tg, &xpmem_my_part->tg_hashtable[index].list,
 								tg_hashlist) {
@@ -49,12 +45,10 @@ __xpmem_tg_ref_by_tgid(pid_t tgid, int return_destroying)
 			}
 
 			xpmem_tg_ref(tg);
-			read_unlock(&xpmem_my_part->tg_hashtable[index].lock);
 			return tg;
 		}
 	}
 
-	read_unlock(&xpmem_my_part->tg_hashtable[index].lock);
 	return ERR_PTR(-ENOENT);
 }
 
@@ -86,8 +80,6 @@ xpmem_tg_ref_by_apid(xpmem_apid_t apid)
 void
 xpmem_tg_deref(struct xpmem_thread_group *tg)
 {
-	char tgid_string[XPMEM_TGID_STRING_LEN];
-
 	DBUG_ON(atomic_read(&tg->refcnt) <= 0);
 	if (atomic_dec_return(&tg->refcnt) != 0)
 		return;
@@ -105,13 +97,6 @@ xpmem_tg_deref(struct xpmem_thread_group *tg)
 	 * the extra increment previously done in xpmem_open().
 	 */
 	put_task_struct(tg->group_leader);
-
-	snprintf(tgid_string, XPMEM_TGID_STRING_LEN, "%d", tg->tgid);
-	spin_lock(&xpmem_unpin_procfs_lock);
-	remove_proc_entry(tgid_string, xpmem_unpin_procfs_dir);
-	spin_unlock(&xpmem_unpin_procfs_lock);
-
-	kfree(tg->ap_hashtable);
 
 	kfree(tg);
 }
