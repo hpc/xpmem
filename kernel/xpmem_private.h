@@ -244,7 +244,7 @@ struct xpmem_partition {
 
 /*
  * Attribute and state flags for various xpmem structures. Some values
- * are defined in xpmem.h, so we reserved space here via XPMEM_DONT_USE_X
+ * are defined in xpmem_internal.h, so we reserved space here via XPMEM_DONT_USE_X
  * to prevent overlap.
  */
 #define XPMEM_FLAG_DESTROYING		0x00040	/* being destroyed */

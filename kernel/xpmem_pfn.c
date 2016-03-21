@@ -6,6 +6,7 @@
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2009, 2014 Cray Inc. All Rights Reserved
  * Copyright 2016 ARM Inc. All Rights Reserved
+ * Copyright (c) 2016      Nathan Hjelm <hjelmn@cs.unm.edu>
  */
 
 /*
@@ -16,7 +17,7 @@
 #include <linux/pagemap.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <xpmem.h>
+#include "xpmem_internal.h"
 #include "xpmem_private.h"
 
 /* #of pages rounded up that vaddr and size occupy */

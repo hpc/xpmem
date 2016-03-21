@@ -1,8 +1,9 @@
 /*
  * Copyright (c) 2009 Cray, Inc.
+ * Copyright (c) 2016 Nathan Hjelm <hjelmn@cs.unm.edu>
  *
- * This file is subject to the terms and conditions of the GNU General Public
- * License.  See the file "COPYING" in the main directory of this archive
+ * This file is subject to the terms and conditions of the GNU Lesser General Public
+ * License.  See the file "COPYING.LESSER" in the main directory of this archive
  * for more details.
  */
 #include <errno.h>
@@ -12,7 +13,7 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 
-#include <xpmem.h>
+#include "xpmem_internal.h"
 
 static int xpmem_fd = -1;
 
@@ -75,21 +76,6 @@ int xpmem_ioctl(int cmd, void *arg)
 	return ret;
 }
 
-/**
- * xpmem_make - share a memory block
- * @vaddr: IN: starting address of region to share
- * @size: IN: number of bytes to share
- * @permit_type: IN: only XPMEM_PERMIT_MODE currently defined
- * @permit_value: IN: permissions mode expressed as an octal value
- * Description:
- *	xpmem_make() shares a memory block by invoking the XPMEM driver.
- * Context:
- *	Called by the source process to obtain a segment ID to share with other
- *	processes.
- * Return Value:
- *	Success: 64-bit segment ID (xpmem_segid_t)
- *	Failure: -1
- */
 xpmem_segid_t xpmem_make(void *vaddr, size_t size, int permit_type,
 			 void *permit_value)
 {
@@ -106,19 +92,6 @@ xpmem_segid_t xpmem_make(void *vaddr, size_t size, int permit_type,
 	return make_info.segid;
 }
 
-/**
- * xpmem_remove - revoke access to a shared memory block
- * @segid: IN: 64-bit segment ID of the region to stop sharing
- * Description:
- *	The opposite of xpmem_make(), this function deletes the mapping for a
- *	specified segid that was created from a previous xpmem_make() call.
- * Context:
- *	Optionally called by the source process, otherwise automatically called
- *	by the driver when the source process exits.
- * Return Value:
- *	Success: 0
- *	Failure: -1
- */
 int xpmem_remove(xpmem_segid_t segid)
 {
 	struct xpmem_cmd_remove	remove_info;
@@ -129,22 +102,6 @@ int xpmem_remove(xpmem_segid_t segid)
 	return 0;
 }
 
-/**
- * xpmem_get - obtain permission to attach memory
- * @segid: IN: segment ID returned from a previous xpmem_make() call
- * @flags: IN: read-write (XPMEM_RDWR) or read-only (XPMEM_RDONLY)
- * @permit_type: IN: only XPMEM_PERMIT_MODE currently defined
- * @permit_value: IN: permissions mode expressed as an octal value
- * Description:
- *	xpmem_get() attempts to get access to a shared memory block.
- * Context:
- *	Called by the consumer process to get permission to attach memory from
- *	the source virtual address space associated with this segid. If access
- *	is granted, an apid will be returned to pass to xpmem_attach().
- * Return Value:
- *	Success: 64-bit access permit ID (xpmem_apid_t)
- *	Failure: -1
- */
 xpmem_apid_t xpmem_get(xpmem_segid_t segid, int flags, int permit_type,
 			void *permit_value)
 {
@@ -159,19 +116,6 @@ xpmem_apid_t xpmem_get(xpmem_segid_t segid, int flags, int permit_type,
 	return get_info.apid;
 }
 
-/**
- * xpmem_release - give up access to the segment
- * @apid: IN: 64-bit access permit ID to release
- * Description:
- *	The opposite of xpmem_get(), this function deletes any mappings in the
- *	consumer's address space.
- * Context:
- *	Optionally called by the consumer process, otherwise automatically
- *	called by the driver when the consumer process exits.
- * Return Value:
- *	Success: 0
- *	Failure: -1
- */
 int xpmem_release(xpmem_apid_t apid)
 {
 	struct xpmem_cmd_release release_info;
@@ -182,25 +126,6 @@ int xpmem_release(xpmem_apid_t apid)
 	return 0;
 }
 
-/**
- * xpmem_attach - map a source address to own address space
- * @addr: IN: a structure consisting of a xpmem_apid_t apid and an off_t offset
- * 	addr.apid: access permit ID returned from a previous xpmem_get() call
- * 	addr.offset: offset into the source memory to begin the mapping
- * @size: IN: number of bytes to map
- * @vaddr: IN: address at which the mapping should be created, or NULL if the
- *		kernel should choose
- * Description:
- *	Attaches a virtual address space range from the source process.
- * Context:
- *	Called by the consumer to get a mapping between the shared source
- *	address and an address in the consumer process' own address space. If
- *	the mapping is successful, then the consumer process can now begin
- *	accessing the shared memory.
- * Return Value:
- *	Success: virtual address at which the mapping was created
- *	Failure: -1
- */
 void *xpmem_attach(struct xpmem_addr addr, size_t size, void *vaddr)
 {
 	struct xpmem_cmd_attach attach_info;
@@ -216,19 +141,6 @@ void *xpmem_attach(struct xpmem_addr addr, size_t size, void *vaddr)
 	return (void *)attach_info.vaddr;
 }
 
-/**
- * xpmem_detach - remove a mapping between consumer and source
- * @vaddr: IN: virtual address within an XPMEM mapping in the consumer's
- *		address space
- * Description:
- *	Detach from the virtual address space of the source process.
- * Context:
- *	Optionally called by the consumer process, otherwise automatically
- *	called by the driver when the consumer process exits.
- * Return Value:
- *	Success: 0
- *	Failure: -1
- */
 int xpmem_detach(void *vaddr)
 {
 	struct xpmem_cmd_detach detach_info;
@@ -239,13 +151,6 @@ int xpmem_detach(void *vaddr)
 	return 0;
 }
 
-/**
- * xpmem_version - get the XPMEM version
- *
- * Return Value:
- *	Success: XPMEM version number
- *	Failure: -1
- */
 int xpmem_version(void)
 {
 	return xpmem_ioctl(XPMEM_CMD_VERSION, NULL);
