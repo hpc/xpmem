@@ -1,0 +1,22 @@
+sudo: required
+dist: trusty
+language: c
+compiler: gcc
+os: linux
+
+addons:
+        apt:
+                packages:
+                        - autoconf
+                        - automake
+                        - libtool
+                        - m4
+
+script:
+        - ./autogen.sh
+        - export KERNEL=$(uname -r | sed 's/\-generic//g') ; apt-get download linux-headers-$KERNEL linux-headers-$KERNEL-generic
+        - for file in $(ls linux-headers-*) ; do dpkg -x $file linux-headers ; done
+        - ./configure --prefix=/tmp/xpmem --with-default-prefix=/tmp/xpmem --with-module=/tmp/xpmem/share/modules/xpmem --with-kerneldir=$PWD/linux-headers/usr/src/linux-headers-$(uname -r)
+        - make -j4 ; sudo make install
+        - sudo insmod /tmp/xpmem/lib/module/xpmem.ko ; sleep 1 ; sudo chmod 666 /dev/xpmem
+        - make check
