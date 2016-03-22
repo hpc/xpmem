@@ -3,9 +3,8 @@ AM_CPPFLAGS = -Iinclude \
 
 AM_LDFLAGS = @top_srcdir@/lib/libxpmem.la
 
-bin_PROGRAMS = xpmem_proc1 \
-               xpmem_proc2 \
-	       xpmem_master
+noinst_PROGRAMS = xpmem_proc1 xpmem_proc2 xpmem_master
+TESTS = run.sh
 
-EXTRA_DIST = include/xpmem_test.h run.sh
+EXTRA_DIST = include/xpmem_test.h run.sh.in
 
