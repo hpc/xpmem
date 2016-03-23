@@ -7,7 +7,5 @@ bin_PROGRAMS = xpmem_proc1 \
                xpmem_proc2 \
 	       xpmem_master
 
-EXTRA_DIST = \
-        include/xpmem_test.h
+EXTRA_DIST = include/xpmem_test.h run.sh
 
-bin_SCRIPTS = run.sh

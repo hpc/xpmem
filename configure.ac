@@ -76,6 +76,5 @@ AC_CONFIG_FILES([Makefile
                  kernel/xpmem
                  lib/Makefile
                  lib/cray-xpmem.conf
-                 test/Makefile
-                 test/run.sh])
+                 test/Makefile])
 AC_OUTPUT

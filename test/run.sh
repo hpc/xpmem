@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
 
-PATH=$PATH:/opt/cray/xpmem/default/bin
-
-if [ -e "/tmp/xpmem.share" ]; then
-	rm /tmp/xpmem.share
-fi
-if [ -e "/tmp/xpmem.lock" ]; then
-	rm /tmp/xpmem.lock
-fi
+test -e /tmp/xpmem.share && rm -f /tmp/xpmem.share
+test -e /tmp/xpmem.lock && rm -f /tmp/xpmem.lock
 
 # create TMP_SHARE_SIZE bytes defined in xpmem_test.h
 for i in `seq 0 31` ; do
