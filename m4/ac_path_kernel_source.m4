@@ -33,7 +33,7 @@ AC_DEFUN([AC_PATH_KERNEL_SOURCE_SEARCH],
   fi
 
   if test x${no_kernel} = xyes; then
-      kerneldir=`pwd`
+      AC_MSG_ERROR([could not find kernel sources])
   fi
   ac_cv_have_kernel="no_kernel=${no_kernel} \
                 kerneldir=\"${kerneldir}\" \
