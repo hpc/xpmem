@@ -5,6 +5,7 @@
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2009, 2014 Cray Inc. All Rights Reserved
+ * Copyright 2016 ARM Inc. All Rights Reserved
  */
 
 /*
@@ -25,6 +26,18 @@
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
 #define PDE_DATA(inode)	((PDE(inode)->data))
+#endif
+
+#if CONFIG_HUGETLB_PAGE
+
+#if (defined(CONFIG_ARM64) || defined(CONFIG_ARM))
+#define pmd_is_huge(p) pmd_sect(p)
+#define pud_is_huge(p) pud_sect(p)
+#elif defined(CONFIG_X86)
+#define pmd_is_huge(p) pmd_large(p)
+#define pud_is_huge(p) pud_large(p)
+#else
+#error Unsuported architecture
 #endif
 
 static pte_t *
@@ -73,6 +86,7 @@ xpmem_hugetlb_pte(pte_t *pte, struct mm_struct *mm, u64 vaddr, u64 *offset)
 
 	return (pte_t *)pte;
 }
+#endif
 
 /*
  * Given an address space and a virtual address return a pointer to its
@@ -100,18 +114,22 @@ xpmem_vaddr_to_pte_offset(struct mm_struct *mm, u64 vaddr, u64 *offset)
 	pud = pud_offset(pgd, vaddr);
 	if (!pud_present(*pud))
 		return NULL;
-	else if (pud_large(*pud)) {
+#if CONFIG_HUGETLB_PAGE
+	else if (pud_is_huge(*pud)) {
 		/* pte folded into the pmd which is folded into the pud */
 		return xpmem_hugetlb_pte((pte_t *) pud, mm, vaddr, offset);
 	}
+#endif
 
 	pmd = pmd_offset(pud, vaddr);
 	if (!pmd_present(*pmd))
 		return NULL;
-	else if (pmd_large(*pmd)) {
+#if CONFIG_HUGETLB_PAGE
+	else if (pmd_is_huge(*pmd)) {
 		/* pte folded into the pmd */
 		return xpmem_hugetlb_pte((pte_t *) pmd, mm, vaddr, offset);
 	}
+#endif
 
 	pte = pte_offset_map(pmd, vaddr);
 	if (!pte_present(*pte))

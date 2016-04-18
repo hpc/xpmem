@@ -7,6 +7,7 @@
  * Copyright 2009, 2010, 2014 Cray Inc. All Rights Reserved
  * Copyright (c) 2014-2016 Los Alamos National Security, LCC. All rights
  *                         reserved.
+ * Copyright 2016 ARM Inc. All Rights Reserved
  */
 
 /*
@@ -20,7 +21,6 @@
 #include <linux/bit_spinlock.h>
 #include <linux/sched.h>
 #include <linux/hugetlb.h>
-#include <linux/huge_mm.h>
 #include <asm/signal.h>
 
 #ifdef CONFIG_MMU_NOTIFIER
