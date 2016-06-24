@@ -583,12 +583,6 @@ xpmem_detach(u64 at_vaddr)
 
 	vma->vm_private_data = NULL;
 
-	/* NTH: drop the current mm semaphore before calling vm_munmap (which will
-	 * call down_write on the same semaphore) */
-	up_write(&current->mm->mmap_sem);
-	ret = vm_munmap(vma->vm_start, att->at_size);
-	DBUG_ON(ret != 0);
-
 	att->flags &= ~XPMEM_FLAG_VALIDPTEs;
 
 	spin_lock(&ap->lock);
@@ -596,6 +590,13 @@ xpmem_detach(u64 at_vaddr)
 	spin_unlock(&ap->lock);
 
 	mutex_unlock(&att->mutex);
+
+
+	/* NTH: drop the current mm semaphore before calling vm_munmap (which will
+	 * call down_write on the same semaphore) */
+	up_write(&current->mm->mmap_sem);
+	ret = vm_munmap(vma->vm_start, att->at_size);
+	DBUG_ON(ret != 0);
 
 	xpmem_att_destroyable(att);
 

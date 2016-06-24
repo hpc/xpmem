@@ -58,6 +58,7 @@
  *     2.6.2  Fix race in xpmem_open
  *     2.6.3  Fix bugs introduced in 2.6.2 that worked with 3.x but
  *            not 4.x kernels.
+ *     2.6.4  Fix hold-and-wait deadlock on detach.
  *
  * This int constant has the following format:
  *
@@ -69,7 +70,7 @@
  *       minor - minor revision number (16-bits)
  */
 #define XPMEM_CURRENT_VERSION		0x00026003
-#define XPMEM_CURRENT_VERSION_STRING	"2.6.3"
+#define XPMEM_CURRENT_VERSION_STRING	"2.6.4"
 
 #define XPMEM_MODULE_NAME "xpmem"
 
