@@ -32,7 +32,11 @@
 
 #if (defined(CONFIG_ARM64) || defined(CONFIG_ARM))
 #define pmd_is_huge(p) pmd_sect(p)
+#if (defined(pud_sect))
 #define pud_is_huge(p) pud_sect(p)
+#else
+#define pud_is_huge(p) (0)
+#endif
 #elif defined(CONFIG_X86)
 #define pmd_is_huge(p) pmd_large(p)
 #define pud_is_huge(p) pud_large(p)
