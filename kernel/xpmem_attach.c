@@ -7,6 +7,7 @@
  * Copyright 2010,2012 Cray Inc. All Rights Reserved
  * Copyright (c) 2014-2017 Los Alamos National Security, LLC. All rights
  *                         reserved.
+ * Copyright 2017 ARM, Inc. All Rights Reserved
  */
 
 /*
@@ -19,6 +20,10 @@
 #include <linux/file.h>
 #include "xpmem_internal.h"
 #include "xpmem_private.h"
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/sched/signal.h>
+#endif
 
 static void
 xpmem_open_handler(struct vm_area_struct *vma)
@@ -152,11 +157,20 @@ out:
 }
 
 static int
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+xpmem_fault_handler(struct vm_fault *vmf)
+#else
 xpmem_fault_handler(struct vm_area_struct *vma, struct vm_fault *vmf)
+#endif
 {
 	int ret, att_locked = 0;
 	int seg_tg_mmap_sem_locked = 0, vma_verification_needed = 0;
-	u64 vaddr = (u64)(uintptr_t) vmf->virtual_address;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+	u64 vaddr = (u64)(uintptr_t) vmf->address;
+        struct vm_area_struct *vma = vmf->vma;
+#else
+        u64 vaddr = (u64)(uintptr_t) vmf->virtual_address;
+#endif
 	u64 seg_vaddr;
 	unsigned long pfn = 0, old_pfn = 0;
 	struct xpmem_thread_group *ap_tg, *seg_tg;

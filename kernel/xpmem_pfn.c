@@ -5,7 +5,7 @@
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2009, 2014 Cray Inc. All Rights Reserved
- * Copyright 2016 ARM Inc. All Rights Reserved
+ * Copyright 2016-2017 ARM Inc. All Rights Reserved
  * Copyright (c) 2016-2017 Nathan Hjelm <hjelmn@cs.unm.edu>
  */
 
@@ -19,6 +19,10 @@
 #include <linux/seq_file.h>
 #include "xpmem_internal.h"
 #include "xpmem_private.h"
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/sched/signal.h>
+#endif
 
 /* #of pages rounded up that vaddr and size occupy */
 #undef num_of_pages
@@ -223,7 +227,10 @@ xpmem_pin_page(struct xpmem_thread_group *tg, struct task_struct *src_task,
 	}
 
 	/* get_user_pages() faults and pins the page */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+#if   LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+        ret = get_user_pages_remote (src_task, src_mm, vaddr, 1, FOLL_WRITE | FOLL_FORCE,
+                                     &page, NULL, NULL);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
 	ret = get_user_pages_remote (src_task, src_mm, vaddr, 1, FOLL_WRITE | FOLL_FORCE,
 				     &page, NULL);
 #else
