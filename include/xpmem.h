@@ -1,20 +1,21 @@
 /*
- * This file is subject to the terms and conditions of the GNU General Public
- * License.  See the file "COPYING" in the main directory of this archive
- * for more details.
+ * This file is subject to the terms and conditions of the GNU Lesser General
+ * Public License.  See the file "COPYING.LESSER" in the main directory of
+ * this archive for more details. The underlying library is subject to the
+ * terms and conditions of the GNU Lesser General Public License.
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
+ * Copyright (c) 2016      Nathan Hjelm. All rights reserved.
  */
 
 /*
  * Cross Partition Memory (XPMEM) structures and macros.
  */
 
-#ifndef _XPMEM_H
-#define _XPMEM_H
+#ifndef XPMEM_H
+#define XPMEM_H
 
 #include <linux/types.h>
-#include <asm/ioctl.h>
 #ifndef __KERNEL__
 #include <sys/types.h>
 #endif
@@ -22,28 +23,43 @@
 /*
  * basic argument type definitions
  */
-typedef __s64 xpmem_segid_t;	/* segid returned from xpmem_make() */
-typedef __s64 xpmem_apid_t;	/* apid returned from xpmem_get() */
+/**
+ * segid returned from xpmem_make()
+ */
+typedef __s64 xpmem_segid_t;
 
+/**
+ * apid returned from xpmem_get()
+ */
+typedef __s64 xpmem_apid_t;
+
+/**
+ * Structure used by xpmem_attach().
+ */
 struct xpmem_addr {
-	xpmem_apid_t apid;	/* apid that represents memory */
-	off_t offset;		/* offset into apid's memory */
+        /** apid that represents memory */
+        xpmem_apid_t apid;
+        /** offset into apid's memory region */
+	off_t offset;
 };
 
-#define XPMEM_MAXADDR_SIZE	(size_t)(-1L)
-
-/*
- * path to XPMEM device
+/**
+ * Maximum address size for xpmem_make. Keep in mind that there may
+ * be platform-dependant restrictions beyond this size. Attempting
+ * to attach to an address range that goes outside the additional
+ * restriction will return an error. A new define may be added in
+ * the future to indicate the largest address that can be attached.
  */
-#define XPMEM_DEV_PATH  "/dev/xpmem"
+#define XPMEM_MAXADDR_SIZE	(size_t)(-1L)
 
 /*
  * The following are the possible XPMEM related errors.
  */
-#define XPMEM_ERRNO_NOPROC	2004	/* unknown thread due to fork() */
+/** Unknown thread due to fork() */
+#define XPMEM_ERRNO_NOPROC	2004
 
 /*
- * flags for segment permissions
+ * Flags for segment permissions
  */
 #define XPMEM_RDONLY	0x1
 #define XPMEM_RDWR	0x2
@@ -51,70 +67,128 @@ struct xpmem_addr {
 /*
  * Valid permit_type values for xpmem_make().
  */
-#define XPMEM_PERMIT_MODE	0x1
+enum {
+  /** Permit value are unix-style permissions with mask 0777. Any bit
+   * set outside this range is an error. This is the only valid permit
+   * mode at this time. */
+  XPMEM_PERMIT_MODE = 0x1,
+};
 
-/*
- * ioctl() commands used to interface to the kernel module.
+#if !defined(__KERNEL__)
+
+/**
+ * xpmem_version - get the XPMEM version
+ *
+ * Return Value:
+ *	Success: XPMEM version number
+ *	Failure: -1
  */
-#define XPMEM_IOC_MAGIC		'x'
-#define XPMEM_CMD_VERSION	_IO(XPMEM_IOC_MAGIC, 0)
-#define XPMEM_CMD_MAKE		_IO(XPMEM_IOC_MAGIC, 1)
-#define XPMEM_CMD_REMOVE	_IO(XPMEM_IOC_MAGIC, 2)
-#define XPMEM_CMD_GET		_IO(XPMEM_IOC_MAGIC, 3)
-#define XPMEM_CMD_RELEASE	_IO(XPMEM_IOC_MAGIC, 4)
-#define XPMEM_CMD_ATTACH	_IO(XPMEM_IOC_MAGIC, 5)
-#define XPMEM_CMD_DETACH	_IO(XPMEM_IOC_MAGIC, 6)
-#define XPMEM_CMD_FORK_BEGIN	_IO(XPMEM_IOC_MAGIC, 7)
-#define XPMEM_CMD_FORK_END	_IO(XPMEM_IOC_MAGIC, 8)
+int xpmem_version (void);
 
-/*
- * Structures used with the preceding ioctl() commands to pass data.
+/**
+ * xpmem_make - share a memory block
+ * @vaddr: IN: starting address of region to share
+ * @size: IN: number of bytes to share
+ * @permit_type: IN: only XPMEM_PERMIT_MODE currently defined
+ * @permit_value: IN: permissions mode expressed as an octal value
+ * Description:
+ *	xpmem_make() shares a memory block by invoking the XPMEM driver.
+ * Context:
+ *	Called by the source process to obtain a segment ID to share with other
+ *	processes. It is common to call this function with vadder = NULL and
+ *      size = XPMEM_MAXADDR_SIZE. This will share the entire address space of
+ *      the calling process.
+ * Return Value:
+ *	Success: 64-bit segment ID (xpmem_segid_t)
+ *	Failure: -1
  */
-struct xpmem_cmd_make {
-	__u64 vaddr;
-	size_t size;
-	int permit_type;
-	__u64 permit_value;
-	xpmem_segid_t segid;	/* returned on success */
-};
+xpmem_segid_t xpmem_make (void *vaddr, size_t size, int permit_type, void *permit_value);
 
-struct xpmem_cmd_remove {
-	xpmem_segid_t segid;
-};
+/**
+ * xpmem_remove - revoke access to a shared memory block
+ * @segid: IN: 64-bit segment ID of the region to stop sharing
+ * Description:
+ *	The opposite of xpmem_make(), this function deletes the mapping for a
+ *	specified segid that was created from a previous xpmem_make() call.
+ * Context:
+ *	Optionally called by the source process, otherwise automatically called
+ *	by the driver when the source process exits.
+ * Return Value:
+ *	Success: 0
+ *	Failure: -1
+ */
+int xpmem_remove (xpmem_segid_t segid);
 
-struct xpmem_cmd_get {
-	xpmem_segid_t segid;
-	int flags;
-	int permit_type;
-	__u64 permit_value;
-	xpmem_apid_t apid;	/* returned on success */
-};
+/**
+ * xpmem_get - obtain permission to attach memory
+ * @segid: IN: segment ID returned from a previous xpmem_make() call
+ * @flags: IN: read-write (XPMEM_RDWR) or read-only (XPMEM_RDONLY)
+ * @permit_type: IN: only XPMEM_PERMIT_MODE currently defined
+ * @permit_value: IN: permissions mode expressed as an octal value
+ * Description:
+ *	xpmem_get() attempts to get access to a shared memory block.
+ * Context:
+ *	Called by the consumer process to get permission to attach memory from
+ *	the source virtual address space associated with this segid. If access
+ *	is granted, an apid will be returned to pass to xpmem_attach().
+ * Return Value:
+ *	Success: 64-bit access permit ID (xpmem_apid_t)
+ *	Failure: -1
+ */
+xpmem_apid_t xpmem_get (xpmem_segid_t segid, int flags, int permit_type,
+                        void *permit_value);
 
-struct xpmem_cmd_release {
-	xpmem_apid_t apid;
-};
+/**
+ * xpmem_release - give up access to the segment
+ * @apid: IN: 64-bit access permit ID to release
+ * Description:
+ *	The opposite of xpmem_get(), this function deletes any mappings in the
+ *	consumer's address space.
+ * Context:
+ *	Optionally called by the consumer process, otherwise automatically
+ *	called by the driver when the consumer process exits.
+ * Return Value:
+ *	Success: 0
+ *	Failure: -1
+ */
+int xpmem_release (xpmem_apid_t apid);
 
-struct xpmem_cmd_attach {
-	xpmem_apid_t apid;
-	off_t offset;
-	size_t size;
-	__u64 vaddr;
-	int fd;
-	int flags;
-};
+/**
+ * xpmem_attach - map a source address to own address space
+ * @addr: IN: a structure consisting of a xpmem_apid_t apid and an off_t offset
+ * 	addr.apid: access permit ID returned from a previous xpmem_get() call
+ * 	addr.offset: offset into the source memory to begin the mapping
+ * @size: IN: number of bytes to map
+ * @vaddr: IN: address at which the mapping should be created, or NULL if the
+ *		kernel should choose
+ * Description:
+ *	Attaches a virtual address space range from the source process.
+ * Context:
+ *	Called by the consumer to get a mapping between the shared source
+ *	address and an address in the consumer process' own address space. If
+ *	the mapping is successful, then the consumer process can now begin
+ *	accessing the shared memory.
+ * Return Value:
+ *	Success: virtual address at which the mapping was created
+ *	Failure: -1
+ */
+void *xpmem_attach (struct xpmem_addr addr, size_t size, void *vaddr);
 
-struct xpmem_cmd_detach {
-	__u64 vaddr;
-};
+/**
+ * xpmem_detach - remove a mapping between consumer and source
+ * @vaddr: IN: virtual address within an XPMEM mapping in the consumer's
+ *		address space
+ * Description:
+ *	Detach from the virtual address space of the source process.
+ * Context:
+ *	Optionally called by the consumer process, otherwise automatically
+ *	called by the driver when the consumer process exits.
+ * Return Value:
+ *	Success: 0
+ *	Failure: -1
+ */
+int xpmem_detach (void *vaddr);
 
-#ifndef __KERNEL__
-extern int xpmem_version(void);
-extern xpmem_segid_t xpmem_make(void *, size_t, int, void *);
-extern int xpmem_remove(xpmem_segid_t);
-extern xpmem_apid_t xpmem_get(xpmem_segid_t, int, int, void *);
-extern int xpmem_release(xpmem_apid_t);
-extern void *xpmem_attach(struct xpmem_addr, size_t, void *);
-extern int xpmem_detach(void *);
-#endif
+#endif /* !defined(__KERNEL__) */
 
-#endif /* _XPMEM_H */
+#endif /* XPMEM_H */

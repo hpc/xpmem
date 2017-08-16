@@ -7,6 +7,7 @@
  * Copyright (c) 2009 Cray Inc. All Rights Reserved
  * Copyright (c) 2014      Los Alamos National Security, LLC. All rights
  *                         reserved.
+ * Copyright (c) 2016      Nathan Hjelm <hjelmn@cs.unm.edu>
  */
 
 /*
@@ -15,7 +16,7 @@
 
 #include <linux/err.h>
 #include <linux/mm.h>
-#include <xpmem.h>
+#include "xpmem_internal.h"
 #include "xpmem_private.h"
 
 /*

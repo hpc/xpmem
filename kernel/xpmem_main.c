@@ -30,7 +30,7 @@
 #include <linux/mm.h>
 #include <linux/file.h>
 #include <linux/proc_fs.h>
-#include <xpmem.h>
+#include "xpmem_internal.h"
 #include "xpmem_private.h"
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)

@@ -4,6 +4,7 @@
  * Copyright (c) 2010,2012 Cray, Inc.
  * Copyright (c) 2014-2015 Los Alamos National Security, LLC. All rights
  *                         reserved.
+ * Copyright (c) 2016      Nathan Hjelm <hjelmn@cs.unm.edu>
  *
  * This file is subject to the terms and conditions of the GNU General Public
  * License. See the file "COPYING" in the main directory of this archive for
@@ -20,7 +21,7 @@
 #include <asm/tlbflush.h>
 #include <asm/uaccess.h>
 
-#include <xpmem.h>
+#include "xpmem_internal.h"
 #include "xpmem_private.h"
 
 static inline void

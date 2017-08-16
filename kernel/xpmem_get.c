@@ -4,6 +4,7 @@
  * for more details.
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
+ * Copyright (c) 2016      Nathan Hjelm <hjelmn@cs.unm.edu>
  */
 
 /*
@@ -13,7 +14,7 @@
 #include <linux/err.h>
 #include <linux/mm.h>
 #include <linux/stat.h>
-#include <xpmem.h>
+#include "xpmem_internal.h"
 #include "xpmem_private.h"
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,5,0)
