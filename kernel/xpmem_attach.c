@@ -5,7 +5,7 @@
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2010,2012 Cray Inc. All Rights Reserved
- * Copyright (c) 2014-2016 Los Alamos National Security, LLC. All rights
+ * Copyright (c) 2014-2017 Los Alamos National Security, LLC. All rights
  *                         reserved.
  */
 
@@ -294,7 +294,11 @@ out_1:
 				       "%ld != %ld\n", old_pfn, pfn);
 			}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)
+			put_page(pfn_to_page(pfn));
+#else
 			page_cache_release(pfn_to_page(pfn));
+#endif
 			atomic_dec(&seg->tg->n_pinned);
 			atomic_inc(&xpmem_my_part->n_unpinned);
 			goto out;
