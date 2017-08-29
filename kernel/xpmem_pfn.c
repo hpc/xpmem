@@ -6,7 +6,7 @@
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2009, 2014 Cray Inc. All Rights Reserved
  * Copyright 2016 ARM Inc. All Rights Reserved
- * Copyright (c) 2016      Nathan Hjelm <hjelmn@cs.unm.edu>
+ * Copyright (c) 2016-2017 Nathan Hjelm <hjelmn@cs.unm.edu>
  */
 
 /*
@@ -264,7 +264,11 @@ xpmem_unpin_pages(struct xpmem_segment *seg, struct mm_struct *mm,
 			XPMEM_DEBUG("pfn=%llx, vaddr=%llx, n_pgs=%d",
 					pfn, vaddr, n_pgs);
 			page = virt_to_page(__va(pfn << PAGE_SHIFT));
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)
+			put_page(page);
+#else
 			page_cache_release(page);
+#endif
 			n_pgs_unpinned++;
 			vaddr += PAGE_SIZE;
 			n_pgs--;
