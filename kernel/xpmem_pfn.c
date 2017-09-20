@@ -223,7 +223,12 @@ xpmem_pin_page(struct xpmem_thread_group *tg, struct task_struct *src_task,
 	}
 
 	/* get_user_pages() faults and pins the page */
-	ret = get_user_pages(src_task, src_mm, vaddr, 1, 1, 1, &page, NULL);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+	ret = get_user_pages_remote (src_task, src_mm, vaddr, 1, FOLL_WRITE | FOLL_FORCE,
+				     &page, NULL);
+#else
+	ret = get_user_pages (src_task, src_mm, vaddr, 1, 1, 1, &page, NULL);
+#endif
 
 	if (!cpumask_empty(&saved_mask))
 		set_cpus_allowed_ptr(current, &saved_mask);
