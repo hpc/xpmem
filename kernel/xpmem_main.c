@@ -6,6 +6,7 @@
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2010, 2014 Cray Inc. All Rights Reserved
  * Copyright 2015-2016 Los Alamos National Security, LLC. All rights reserved.
+ * Copyright 2017 ARM, Inc. All rights reserved.
  */
 
 /*
@@ -32,6 +33,10 @@
 #include <linux/proc_fs.h>
 #include "xpmem_internal.h"
 #include "xpmem_private.h"
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/sched/task.h>
+#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
 #define proc_set_user(_pde, _uid, _gid)				\

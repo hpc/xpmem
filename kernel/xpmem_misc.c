@@ -5,6 +5,7 @@
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2009, 2010, 2014 Cray Inc. All Rights Reserved
+ * Copyright 2017 ARM, Inc. All Rights Reserved
  */
 
 /*
@@ -18,6 +19,10 @@
 #include <xpmem.h>
 #include "xpmem_private.h"
 #include <linux/module.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/sched/task.h>
+#endif
 
 uint32_t xpmem_debug_on = 0;
 
