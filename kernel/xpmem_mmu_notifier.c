@@ -129,6 +129,7 @@ xpmem_invalidate_range(struct mmu_notifier *mn, struct mm_struct *mm,
 	}
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
 /*
  * MMU notifier callout for invalidating a single page.
  */
@@ -140,6 +141,7 @@ xpmem_invalidate_page(struct mmu_notifier *mn, struct mm_struct *mm,
 		start -= offset_in_page(start);
 	xpmem_invalidate_range(mn, mm, start, start + PAGE_SIZE);
 }
+#endif
 
 /*
  * MMU notifier callout for releasing a mm_struct.  Remove all traces of
@@ -206,7 +208,9 @@ xpmem_mmu_release(struct mmu_notifier *mn, struct mm_struct *mm)
 }
 
 static const struct mmu_notifier_ops xpmem_mmuops = {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
 	.invalidate_page	= xpmem_invalidate_page,
+#endif
 	.invalidate_range_end	= xpmem_invalidate_range,
 	.release		= xpmem_mmu_release,
 };
