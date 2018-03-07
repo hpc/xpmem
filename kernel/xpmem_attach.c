@@ -165,9 +165,11 @@ xpmem_fault_handler(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	int ret, att_locked = 0;
 	int seg_tg_mmap_sem_locked = 0, vma_verification_needed = 0;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
 	u64 vaddr = (u64)(uintptr_t) vmf->address;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
         struct vm_area_struct *vma = vmf->vma;
+#endif
 #else
         u64 vaddr = (u64)(uintptr_t) vmf->virtual_address;
 #endif

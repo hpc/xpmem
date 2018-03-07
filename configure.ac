@@ -40,31 +40,6 @@ AC_SUBST([initdir], [${sysconfdir}/init.d])
 AC_SUBST([ldsoconfdir], [/etc/ld.so.conf.d])
 AC_SUBST([pkgconfigdir], [${libdir}/pkgconfig])
 
-AC_ARG_WITH([default-prefix],
-  [AS_HELP_STRING([--with-default-prefix=PATH],
-     [PATH to use in place of ${prefix} for default paths.])],
-  [AC_SUBST([default_prefix], $withval)],
-  [AC_SUBST([default_prefix], "")])
-
-AC_ARG_WITH([default-libdir],
-  [AS_HELP_STRING([--with-default-libdir=PATH],
-     [Default PATH for libraries.])],
-  [AC_SUBST([default_libdir], $withval)],
-  [if test -z "${default_prefix}"
-   then
-       AC_MSG_ERROR([Default library path or default prefix must be specified])
-   else
-       default_libdir=${libdir//${prefix}/${default_prefix}}
-       AC_SUBST([default_libdir])
-   fi])
-
-AC_ARG_WITH([module],
-  [AS_HELP_STRING([--with-module=PATH],
-     [use $PATH as name of module file to write.])],
-  [AC_SUBST([MODULE_PATH], $withval)
-   AC_SUBST([MODULE_VERSION], [`basename $withval`])],
-  [AC_MSG_ERROR([Module path must be specified])])
-
 AC_PATH_KERNEL_SOURCE
 
 AC_CONFIG_FILES([Makefile
@@ -75,6 +50,5 @@ AC_CONFIG_FILES([Makefile
                  kernel/Makefile
                  kernel/xpmem
                  lib/Makefile
-                 lib/cray-xpmem.conf
                  test/Makefile])
 AC_OUTPUT
