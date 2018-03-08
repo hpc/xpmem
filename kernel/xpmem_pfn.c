@@ -6,7 +6,7 @@
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2009, 2014 Cray Inc. All Rights Reserved
  * Copyright 2016-2017 ARM Inc. All Rights Reserved
- * Copyright (c) 2016-2017 Nathan Hjelm <hjelmn@cs.unm.edu>
+ * Copyright (c) 2016-2018 Nathan Hjelm <hjelmn@cs.unm.edu>
  */
 
 /*
@@ -111,6 +111,9 @@ xpmem_vaddr_to_pte_offset(struct mm_struct *mm, u64 vaddr, u64 *offset)
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+	p4d_t *p4d;
+#endif
 
 	if (offset)
 		/* if vaddr is not in a huge page it will always be at
@@ -123,7 +126,17 @@ xpmem_vaddr_to_pte_offset(struct mm_struct *mm, u64 vaddr, u64 *offset)
 	/* NTH: there is no pgd_large in kernel 3.13. from what I have read
 	 * the pte is never folded into the pgd. */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+	/* 4.12+ has another level to the page tables */
+	p4d = p4d_offset(pgd, vaddr);
+	if (!p4d_present(*p4d)) {
+		return NULL;
+        }
+
+	pud = pud_offset(p4d, vaddr);
+#else
 	pud = pud_offset(pgd, vaddr);
+#endif
 	if (!pud_present(*pud))
 		return NULL;
 #if CONFIG_HUGETLB_PAGE
@@ -165,6 +178,9 @@ xpmem_vaddr_to_pte_size(struct mm_struct *mm, u64 vaddr, u64 *size)
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+	p4d_t *p4d;
+#endif
 
 	pgd = pgd_offset(mm, vaddr);
 	if (!pgd_present(*pgd)) {
@@ -172,7 +188,18 @@ xpmem_vaddr_to_pte_size(struct mm_struct *mm, u64 vaddr, u64 *size)
 		return NULL;
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+	/* 4.12+ has another level to the page tables */
+	p4d = p4d_offset(pgd, vaddr);
+	if (!p4d_present(*p4d)) {
+		*size = P4D_SIZE;
+		return NULL;
+        }
+
+	pud = pud_offset(p4d, vaddr);
+#else
 	pud = pud_offset(pgd, vaddr);
+#endif
 	if (!pud_present(*pud)) {
 		*size = PUD_SIZE;
 		return NULL;
