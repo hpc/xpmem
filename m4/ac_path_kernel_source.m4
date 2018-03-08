@@ -2,7 +2,7 @@
 ## additional m4 macros
 ##
 ## (C) 1999 Christoph Bartelmus (lirc@bartelmus.de)
-## (C) 2016 Nathan Hjelm
+## (C) 2016-2018 Nathan Hjelm
 ##
 
 
@@ -45,12 +45,25 @@ AC_DEFUN([AC_PATH_KERNEL_SOURCE],
 [
   AC_CHECK_PROG(ac_pkss_mktemp,mktemp,yes,no)
   AC_PROVIDE([AC_PATH_KERNEL_SOURCE])
-  AC_MSG_CHECKING(for Linux kernel sources)
+  AC_MSG_CHECKING([for Linux kernel sources])
+  kernelvers=$(uname -r)
 
   AC_ARG_WITH(kerneldir,
     [  --with-kerneldir=DIR    kernel sources in DIR],
 
     ac_kerneldir=${withval}
+
+    if test -n "$ac_kerneldir" ; then
+	if test ! ${ac_kerneldir#/lib/modules} = ${ac_kerneldir} ; then
+	    kernelvers=$(basename $(dirname ${ac_kerneldir}))
+	elif test ! ${ac_kerneldir#*linux-headers-} = ${ac_kerneldir} ; then
+	    # special case to deal with the way the travis script does headers
+	    kernelvers=${ac_kerneldir#*linux-headers-}
+	else
+	    kernelvers=$(make -s kernelrelease -C ${ac_kerneldir} M=dummy 2>/dev/null)
+	fi
+    fi
+
     AC_PATH_KERNEL_SOURCE_SEARCH,
 
     ac_kerneldir=""
@@ -61,6 +74,11 @@ AC_DEFUN([AC_PATH_KERNEL_SOURCE],
 
   AC_SUBST(kerneldir)
   AC_SUBST(kernelext)
+  AC_SUBST(kernelvers)
   AC_MSG_RESULT(${kerneldir})
+
+  AC_MSG_CHECKING([kernel release])
+  AC_MSG_RESULT([${kernelvers}])
+
 ]
 )
