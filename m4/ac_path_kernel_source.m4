@@ -45,6 +45,11 @@ AC_DEFUN([AC_PATH_KERNEL_SOURCE],
 [
   AC_CHECK_PROG(ac_pkss_mktemp,mktemp,yes,no)
   AC_PROVIDE([AC_PATH_KERNEL_SOURCE])
+
+  AC_ARG_ENABLE([kernel-module],[Enable building the kernel module (default: enabled)],[build_kernel_module=$enableval],
+		[build_kernel_module=1])
+  AS_IF([test $build_kernel_module = 1],[
+
   AC_MSG_CHECKING([for Linux kernel sources])
   kernelvers=$(uname -r)
 
@@ -70,6 +75,8 @@ AC_DEFUN([AC_PATH_KERNEL_SOURCE],
     AC_CACHE_VAL(ac_cv_have_kernel,AC_PATH_KERNEL_SOURCE_SEARCH)
   )
 
+  AC_ARG_WITH(kernelvers, [--with-kernelvers=VERSION   kernel release name], kernelvers=${with_kernelvers})
+
   eval "$ac_cv_have_kernel"
 
   AC_SUBST(kerneldir)
@@ -79,6 +86,7 @@ AC_DEFUN([AC_PATH_KERNEL_SOURCE],
 
   AC_MSG_CHECKING([kernel release])
   AC_MSG_RESULT([${kernelvers}])
-
+  ])
+  AM_CONDITIONAL([BUILD_KERNEL_MODULE], [test $build_kernel_module = 1])
 ]
 )
