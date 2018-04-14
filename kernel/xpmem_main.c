@@ -490,5 +490,6 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Silicon Graphics, Inc.");
 MODULE_INFO(supported, "external");
 MODULE_DESCRIPTION("XPMEM support");
+MODULE_VERSION("2.6.5");
 module_init(xpmem_init);
 module_exit(xpmem_exit);
