@@ -21,6 +21,12 @@ is accessed via direct loads and stores. This enables upper-level
 protocols such as MPI and SHMEM to perform single-copy address-space
 to address-space transfers, completely at user-level.
 
+Note, there is a limitation to the usage of an attached region. Any
+system call that will call get_user_pages() on the region from the
+non-owning process with get EFAULT. This include pthread mutexes
+and condition variable, and SYS V semaphores. We intend to address
+this limitation in a future release.
+
 XPMEM regions are free to have "holes" in them, meaning virtual memory
 regions that are not allocated. This makes XPMEM somewhat more
 flexible than mmap(). A process could, for example, export a region
