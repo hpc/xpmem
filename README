@@ -1,3 +1,18 @@
+
+***************************************************************************
+***************************************************************************
+***************************************************************************
+
+If you wish to contribute to or want to see the latest version of XPMEM
+the new repository is @ http://gitlab.com/hjelmn/xpmem. I do not intent
+to continue to use github for this repository.
+
+***************************************************************************
+***************************************************************************
+***************************************************************************
+
+
+
 This is an experimental version of XPMEM based on a version provided by
 Cray and uploaded to https://code.google.com/p/xpmem. This version supports
 any kernel 3.12 and newer. Keep in mind there may be bugs and this version
