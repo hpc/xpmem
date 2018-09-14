@@ -397,7 +397,7 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 		return -EINVAL;
 
 	/* If the size is not page aligned, fix it */
-	if (offset_in_page(size) != 0) 
+	if (offset_in_page(size) != 0)
 		size += PAGE_SIZE - offset_in_page(size);
 
 	ap_tg = xpmem_tg_ref_by_apid(apid);
@@ -712,8 +712,6 @@ static void
 xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 							int from_mmu)
 {
-	int ret;
-
 	/*
 	 * This function should ideally acquire both att->mm->mmap_sem
 	 * and att->mutex.  However, if it is called from a MMU notifier
@@ -750,7 +748,7 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 		u64 offset_start, offset_end, unpin_at;
 		u64 att_vaddr_end = att->vaddr + att->at_size;
 
-		/* 
+		/*
 		 * SOURCE   [ PG 0 | PG 1 | PG 2 | PG 3 | PG 4 | ... ]
 		 *          ^                    ^
 		 *          |                    |
@@ -806,9 +804,7 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 
 		/* NTH: is this a viable alternative to zap_page_range(). The
 		 * benefit of zap_vma_ptes is that it is exported by default. */
-		ret = zap_vma_ptes (vma, unpin_at, invalidate_len);
-
-		XPMEM_DEBUG("zap_vma_ptes returned %d", ret);
+		(void) zap_vma_ptes (vma, unpin_at, invalidate_len);
 
 		/* Only clear the flag if all pages were zapped */
 		if (offset_start == 0 && att->at_size == invalidate_len)
