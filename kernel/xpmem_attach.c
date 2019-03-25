@@ -804,7 +804,7 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 
 		/* NTH: is this a viable alternative to zap_page_range(). The
 		 * benefit of zap_vma_ptes is that it is exported by default. */
-		(void) zap_vma_ptes (vma, unpin_at, invalidate_len);
+		zap_vma_ptes (vma, unpin_at, invalidate_len);
 
 		/* Only clear the flag if all pages were zapped */
 		if (offset_start == 0 && att->at_size == invalidate_len)
