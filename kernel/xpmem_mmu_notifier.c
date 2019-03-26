@@ -66,12 +66,19 @@ xpmem_invalidate_PTEs_range(struct xpmem_thread_group *seg_tg,
  * in the range have been unmapped and the pages have been freed by the VM.
  */
 static void
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
 xpmem_invalidate_range(struct mmu_notifier *mn,
                        const struct mmu_notifier_range *rp)
+#else
+xpmem_invalidate_range(struct mmu_notifier *mn, struct mm_struct *mm,
+                       unsigned long start, unsigned long end)
+#endif
 {
-        unsigned long start = rp->start;
-        unsigned long end = rp->end;
-        struct mm_struct *mm = rp->mm;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+    unsigned long start = rp->start;
+    unsigned long end = rp->end;
+    struct mm_struct *mm = rp->mm;
+#endif
 	struct xpmem_thread_group *seg_tg;
 	struct vm_area_struct *vma;
 
