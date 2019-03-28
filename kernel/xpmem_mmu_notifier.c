@@ -5,6 +5,7 @@
  * Copyright (c) 2014-2015 Los Alamos National Security, LLC. All rights
  *                         reserved.
  * Copyright (c) 2016      Nathan Hjelm <hjelmn@cs.unm.edu>
+ * Copyright (c) 2019      Stony Brook University. All Rights Reserved
  *
  * This file is subject to the terms and conditions of the GNU General Public
  * License. See the file "COPYING" in the main directory of this archive for
