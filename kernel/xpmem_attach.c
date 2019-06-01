@@ -157,7 +157,12 @@ out:
 	force_sig(SIGKILL, current);
 }
 
-static int
+static
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
+int
+#else
+vm_fault_t
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 xpmem_fault_handler(struct vm_fault *vmf)
 #else
