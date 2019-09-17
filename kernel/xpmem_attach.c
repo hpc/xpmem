@@ -154,7 +154,11 @@ out:
 	/* cause the demise of the current thread group */
 	XPMEM_DEBUG("xpmem_close_handler: unexpected unmap of XPMEM segment at "
 	       "[0x%lx - 0x%lx]\n", vma->vm_start, vma->vm_end);
-	force_sig(SIGKILL, current);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+    force_sig(SIGKILL);
+#else
+    force_sig(SIGKILL, current);
+#endif
 }
 
 static
