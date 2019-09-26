@@ -7,6 +7,8 @@
  * Copyright 2010,2012 Cray Inc. All Rights Reserved
  * Copyright (c) 2014-2017 Los Alamos National Security, LLC. All rights
  *                         reserved.
+ * Copyright (c) 2019      Google, LLC. All rights reserved.
+ * Copyright (c) 2019      Nathan Hjelm. All rights reserved.
  * Copyright 2017 ARM, Inc. All Rights Reserved
  */
 
@@ -712,8 +714,6 @@ static void
 xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 							int from_mmu)
 {
-	int ret;
-
 	/*
 	 * This function should ideally acquire both att->mm->mmap_sem
 	 * and att->mutex.  However, if it is called from a MMU notifier
@@ -806,9 +806,7 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 
 		/* NTH: is this a viable alternative to zap_page_range(). The
 		 * benefit of zap_vma_ptes is that it is exported by default. */
-		ret = zap_vma_ptes (vma, unpin_at, invalidate_len);
-
-		XPMEM_DEBUG("zap_vma_ptes returned %d", ret);
+		(void) zap_vma_ptes (vma, unpin_at, invalidate_len);
 
 		/* Only clear the flag if all pages were zapped */
 		if (offset_start == 0 && att->at_size == invalidate_len)
