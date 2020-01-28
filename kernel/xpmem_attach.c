@@ -155,17 +155,30 @@ out:
 	/* cause the demise of the current thread group */
 	XPMEM_DEBUG("xpmem_close_handler: unexpected unmap of XPMEM segment at "
 	       "[0x%lx - 0x%lx]\n", vma->vm_start, vma->vm_end);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+	force_sig(SIGKILL);
+#else
 	force_sig(SIGKILL, current);
+#endif
 }
 
-static int
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
+static vm_fault_t
+xpmem_fault_handler(struct vm_fault *vmf)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+int
 xpmem_fault_handler(struct vm_fault *vmf)
 #else
+static int
 xpmem_fault_handler(struct vm_area_struct *vma, struct vm_fault *vmf)
 #endif
 {
-	int ret, att_locked = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
+	vm_fault_t ret;
+#else
+	int ret;
+#endif
+	int att_locked = 0;
 	int seg_tg_mmap_sem_locked = 0, vma_verification_needed = 0;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
 	u64 vaddr = (u64)(uintptr_t) vmf->address;
