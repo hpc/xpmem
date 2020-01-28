@@ -65,10 +65,20 @@ xpmem_invalidate_PTEs_range(struct xpmem_thread_group *seg_tg,
  * XPMEM only uses the invalidate_range_end() portion. That is, when all pages
  * in the range have been unmapped and the pages have been freed by the VM.
  */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
 static void
 xpmem_invalidate_range(struct mmu_notifier *mn, struct mm_struct *mm,
 		       unsigned long start, unsigned long end)
 {
+#else
+static void
+xpmem_invalidate_range(struct mmu_notifier *mn,
+	               const struct mmu_notifier_range *mnr)
+{
+	struct mm_struct *mm = mnr->mm;
+	unsigned long start  = mnr->start;
+	unsigned long end    = mnr->end;
+#endif
 	struct xpmem_thread_group *seg_tg;
 	struct vm_area_struct *vma;
 
