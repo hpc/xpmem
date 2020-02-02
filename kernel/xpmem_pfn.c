@@ -223,7 +223,7 @@ xpmem_vaddr_to_pte_size(struct mm_struct *mm, u64 vaddr, u64 *size)
  */
 static int
 xpmem_pin_page(struct xpmem_thread_group *tg, struct task_struct *src_task,
-		struct mm_struct *src_mm, u64 vaddr)
+		struct mm_struct *src_mm, u64 vaddr, unsigned long *pfn)
 {
 	int ret;
 	struct page *page;
@@ -269,11 +269,11 @@ xpmem_pin_page(struct xpmem_thread_group *tg, struct task_struct *src_task,
 #else
 	ret = get_user_pages (src_task, src_mm, vaddr, 1, 1, 1, &page, NULL);
 #endif
-
 	if (!cpumask_empty(&saved_mask))
 		set_cpus_allowed_ptr(current, &saved_mask);
 
 	if (ret == 1) {
+		*pfn = page_to_pfn(page);
 		atomic_inc(&tg->n_pinned);
 		atomic_inc(&xpmem_my_part->n_pinned);
 		ret = 0;
@@ -339,7 +339,7 @@ xpmem_unpin_pages(struct xpmem_segment *seg, struct mm_struct *mm,
  * Given a virtual address and XPMEM segment, pin the page.
  */
 int
-xpmem_ensure_valid_PFN(struct xpmem_segment *seg, u64 vaddr)
+xpmem_ensure_valid_PFN(struct xpmem_segment *seg, u64 vaddr, unsigned long *pfn)
 {
   int ret;
 	struct xpmem_thread_group *seg_tg = seg->tg;
@@ -349,7 +349,7 @@ xpmem_ensure_valid_PFN(struct xpmem_segment *seg, u64 vaddr)
 		return -ENOENT;
 
 	/* pin PFN */
-        ret = xpmem_pin_page(seg_tg, seg_tg->group_leader, seg_tg->mm, vaddr);
+	ret = xpmem_pin_page(seg_tg, seg_tg->group_leader, seg_tg->mm, vaddr, pfn);
 
 	return ret;
 }

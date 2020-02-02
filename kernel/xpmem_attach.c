@@ -292,11 +292,9 @@ xpmem_fault_handler(struct vm_area_struct *vma, struct vm_fault *vmf)
 	seg_vaddr = (att->vaddr & PAGE_MASK) + (vaddr - att->at_vaddr);
 	XPMEM_DEBUG("vaddr = %llx, seg_vaddr = %llx", vaddr, seg_vaddr);
 
-        ret = xpmem_ensure_valid_PFN(seg, seg_vaddr);
+        ret = xpmem_ensure_valid_PFN(seg, seg_vaddr, &pfn);
         if (ret != 0)
 		goto out_2;
-
-	pfn = xpmem_vaddr_to_PFN(seg_tg->mm, seg_vaddr);
 
 	att->flags |= XPMEM_FLAG_VALIDPTEs;
 
@@ -354,6 +352,10 @@ out:
         xpmem_tg_deref(seg_tg);
         xpmem_seg_deref(seg);
 	xpmem_att_deref(att);
+
+	if (ret == VM_FAULT_SIGBUS) {
+		XPMEM_DEBUG("fault returning SIGBUS vaddr=%llx, pfn=%lx", vaddr, pfn);
+	}
 
 	return ret;
 }
