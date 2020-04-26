@@ -7,7 +7,7 @@
 
 Summary: XPMEM: Cross-partition memory
 Name: xpmem-kmod-%{kernel_release}
-Version: 2.6.5
+Version: 2.6.6
 Release: 0
 License: GPLv2
 Group: System Environment/Kernel
