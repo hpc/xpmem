@@ -10,6 +10,7 @@
  * Copyright (c) 2019      Google, LLC. All rights reserved.
  * Copyright (c) 2019      Nathan Hjelm. All rights reserved.
  * Copyright 2017 ARM, Inc. All Rights Reserved
+ * Copyright 2019 Stony Brook University. All Rights Reserved
  */
 
 /*
@@ -414,7 +415,7 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 		return -EINVAL;
 
 	/* If the size is not page aligned, fix it */
-	if (offset_in_page(size) != 0) 
+	if (offset_in_page(size) != 0)
 		size += PAGE_SIZE - offset_in_page(size);
 
 	ap_tg = xpmem_tg_ref_by_apid(apid);
@@ -764,8 +765,11 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 		u64 invalidate_start, invalidate_end, invalidate_len;
 		u64 offset_start, offset_end, unpin_at;
 		u64 att_vaddr_end = att->vaddr + att->at_size;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 17, 0)
+        int ret;
+#endif
 
-		/* 
+		/*
 		 * SOURCE   [ PG 0 | PG 1 | PG 2 | PG 3 | PG 4 | ... ]
 		 *          ^                    ^
 		 *          |                    |
@@ -821,7 +825,13 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 
 		/* NTH: is this a viable alternative to zap_page_range(). The
 		 * benefit of zap_vma_ptes is that it is exported by default. */
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 17, 0)
+		ret = zap_vma_ptes (vma, unpin_at, invalidate_len);
+
+        XPMEM_DEBUG("zap_vma_ptes returned %d", ret);
+#else
 		(void) zap_vma_ptes (vma, unpin_at, invalidate_len);
+#endif
 
 		/* Only clear the flag if all pages were zapped */
 		if (offset_start == 0 && att->at_size == invalidate_len)

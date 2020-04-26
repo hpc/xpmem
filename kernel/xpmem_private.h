@@ -69,8 +69,8 @@
  *       major - major revision number (12-bits)
  *       minor - minor revision number (16-bits)
  */
-#define XPMEM_CURRENT_VERSION		0x00026005
-#define XPMEM_CURRENT_VERSION_STRING	"2.6.5"
+#define XPMEM_CURRENT_VERSION		0x00026006
+#define XPMEM_CURRENT_VERSION_STRING	"2.6.6"
 
 #define XPMEM_MODULE_NAME "xpmem"
 
@@ -296,7 +296,12 @@ extern int xpmem_fork_end(void);
 #define XPMEM_TGID_STRING_LEN	11
 extern spinlock_t xpmem_unpin_procfs_lock;
 extern struct proc_dir_entry *xpmem_unpin_procfs_dir;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)
+extern struct proc_ops xpmem_unpin_procfs_ops;
+#else
 extern struct file_operations xpmem_unpin_procfs_ops;
+#endif /* kernel 5.6 */
 
 /* found in xpmem_main.c */
 extern struct xpmem_partition *xpmem_my_part;
@@ -339,7 +344,13 @@ extern int xpmem_seg_down_read(struct xpmem_thread_group *,
 			       struct xpmem_segment *, int, int);
 extern int xpmem_validate_access(struct xpmem_access_permit *, off_t, size_t,
 				 int, u64 *);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)
+extern struct proc_ops xpmem_debug_printk_procfs_ops;
+#else
 extern struct file_operations xpmem_debug_printk_procfs_ops;
+#endif /* kernel 5.6 */
+
 /* found in xpmem_mmu_notifier.c */
 extern int xpmem_mmu_notifier_init(struct xpmem_thread_group *);
 extern void xpmem_mmu_notifier_unlink(struct xpmem_thread_group *);
