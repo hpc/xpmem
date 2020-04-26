@@ -822,7 +822,7 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 
         XPMEM_DEBUG("zap_vma_ptes returned %d", ret);
 #else
-		zap_vma_ptes (vma, unpin_at, invalidate_len);
+		(void) zap_vma_ptes (vma, unpin_at, invalidate_len);
 #endif
 
 		/* Only clear the flag if all pages were zapped */
