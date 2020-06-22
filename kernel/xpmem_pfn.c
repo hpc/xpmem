@@ -621,11 +621,24 @@ xpmem_unpin_procfs_open(struct inode *inode, struct file *file)
 	return single_open(file, xpmem_unpin_procfs_show, PDE_DATA(inode));
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)
+struct proc_ops xpmem_unpin_procfs_ops = {
+	.proc_lseek		= seq_lseek,
+	.proc_read		= seq_read,
+	.proc_write		= xpmem_unpin_procfs_write,
+	.proc_open		= xpmem_unpin_procfs_open,
+	.proc_release	= single_release,
+};
+#else
+struct file_operations xpmem_unpin_procfs_ops = {
 struct file_operations xpmem_unpin_procfs_ops = {
 	.owner		= THIS_MODULE,
+	.owner		= THIS_MODULE,
 	.llseek		= seq_lseek,
-	.read		= seq_read,
-	.write		= xpmem_unpin_procfs_write,
+	.llseek		= seq_lseek,
+	.open		= xpmem_unpin_procfs_open,
 	.open		= xpmem_unpin_procfs_open,
 	.release	= single_release,
+	.release	= single_release,
 };
+#endif /* kernel 5.6 */
