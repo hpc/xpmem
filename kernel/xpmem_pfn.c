@@ -631,7 +631,6 @@ struct proc_ops xpmem_unpin_procfs_ops = {
 };
 #else
 struct file_operations xpmem_unpin_procfs_ops = {
-struct file_operations xpmem_unpin_procfs_ops = {
 	.owner		= THIS_MODULE,
 	.llseek		= seq_lseek,
     .read       = seq_read,
