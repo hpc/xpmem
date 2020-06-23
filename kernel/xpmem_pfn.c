@@ -633,12 +633,10 @@ struct proc_ops xpmem_unpin_procfs_ops = {
 struct file_operations xpmem_unpin_procfs_ops = {
 struct file_operations xpmem_unpin_procfs_ops = {
 	.owner		= THIS_MODULE,
-	.owner		= THIS_MODULE,
 	.llseek		= seq_lseek,
-	.llseek		= seq_lseek,
+    .read       = seq_read,
+    .write      = xpmem_unpin_procfs_write,
 	.open		= xpmem_unpin_procfs_open,
-	.open		= xpmem_unpin_procfs_open,
-	.release	= single_release,
 	.release	= single_release,
 };
 #endif /* kernel 5.6 */
