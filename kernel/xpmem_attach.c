@@ -27,6 +27,12 @@
 #include <linux/sched/signal.h>
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
+# define LOCK_FIELD(_mm) _mm->mmap_lock
+#else
+# define LOCK_FIELD(_mm) _mm->mmap_sem
+#endif
+
 static void
 xpmem_open_handler(struct vm_area_struct *vma)
 {
@@ -239,9 +245,9 @@ xpmem_fault_handler(struct vm_area_struct *vma, struct vm_fault *vmf)
 	ret = xpmem_seg_down_read(seg_tg, seg, 1, 0);
 	if (ret == -EAGAIN) {
 		/* to avoid possible deadlock drop current->mm->mmap_sem */
-		up_read(&current->mm->mmap_sem);
+		up_read(LOCK_FIELD(&current->mm));
 		ret = xpmem_seg_down_read(seg_tg, seg, 1, 1);
-		down_read(&current->mm->mmap_sem);
+		down_read(LOCK_FIELD(&current->mm));
 		vma_verification_needed = 1;
 	}
 	if (ret != 0)
@@ -254,11 +260,11 @@ xpmem_fault_handler(struct vm_area_struct *vma, struct vm_fault *vmf)
 		 * getting the smaller address first.
 		 */
 		if (current->mm < seg_tg->mm) {
-			down_read(&seg_tg->mm->mmap_sem);
-		} else if (!down_read_trylock(&seg_tg->mm->mmap_sem)) {
-			up_read(&current->mm->mmap_sem);
-			down_read(&seg_tg->mm->mmap_sem);
-			down_read(&current->mm->mmap_sem);
+			down_read(LOCK_FIELD(&seg_tg->mm));
+		} else if (!down_read_trylock(LOCK_FIELD(&seg_tg->mm))) {
+			up_read(LOCK_FIELD(&current->mm));
+			down_read(LOCK_FIELD(&seg_tg->mm));
+			down_read(LOCK_FIELD(&current->mm));
 			vma_verification_needed = 1;
 		}
 		seg_tg_mmap_sem_locked = 1;
@@ -342,7 +348,7 @@ out_1:
 	}
 out:
 	if (seg_tg_mmap_sem_locked)
-		up_read(&seg_tg->mm->mmap_sem);
+		up_read(LOCK_FIELD(&seg_tg->mm));
 
 	if (att_locked)
 		mutex_unlock(&att->mutex);
@@ -495,10 +501,10 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 	if (flags & MAP_FIXED) {
 		struct vm_area_struct *existing_vma;
 
-		down_write(&current->mm->mmap_sem);
+		down_write(LOCK_FIELD(&current->mm));
 		existing_vma = find_vma_intersection(current->mm, vaddr,
 						     vaddr + size);
-		up_write(&current->mm->mmap_sem);
+		up_write(LOCK_FIELD(&current->mm));
 		for ( ; existing_vma && existing_vma->vm_start < vaddr + size
 				; existing_vma = existing_vma->vm_next) {
 			if (xpmem_is_vm_ops_set(existing_vma)) {
@@ -515,9 +521,9 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 	}
 	att->at_vaddr = at_vaddr;
 
-	down_write(&current->mm->mmap_sem);
+	down_write(LOCK_FIELD(&current->mm));
 	vma = find_vma(current->mm, at_vaddr);
-	up_write(&current->mm->mmap_sem);
+	up_write(LOCK_FIELD(&current->mm));
 
 	vma->vm_private_data = att;
 	vma->vm_flags |=
@@ -568,25 +574,25 @@ xpmem_detach(u64 at_vaddr)
 	struct xpmem_attachment *att;
 	struct vm_area_struct *vma;
 
-	down_write(&current->mm->mmap_sem);
+	down_write(LOCK_FIELD(&current->mm));
 
 	/* find the corresponding vma */
 	vma = find_vma(current->mm, at_vaddr);
 	if (!vma || vma->vm_start > at_vaddr) {
-		up_write(&current->mm->mmap_sem);
+		up_write(LOCK_FIELD(&current->mm));
 		return 0;
 	}
 
 	att = (struct xpmem_attachment *)vma->vm_private_data;
 	if (!xpmem_is_vm_ops_set(vma) || att == NULL) {
-		up_write(&current->mm->mmap_sem);
+		up_write(LOCK_FIELD(&current->mm));
 		return -EINVAL;
 	}
 	xpmem_att_ref(att);
 
 	if (mutex_lock_killable(&att->mutex)) {
 		xpmem_att_deref(att);
-		up_write(&current->mm->mmap_sem);
+		up_write(LOCK_FIELD(&current->mm));
 		return -EINTR;
 	}
 
@@ -597,7 +603,7 @@ xpmem_detach(u64 at_vaddr)
 		mutex_unlock(&att->invalidate_mutex);
 		mutex_unlock(&att->mutex);
 		xpmem_att_deref(att);
-		up_write(&current->mm->mmap_sem);
+		up_write(LOCK_FIELD(&current->mm));
 		return 0;
 	}
 	att->flags |= XPMEM_FLAG_DESTROYING;
@@ -612,7 +618,7 @@ xpmem_detach(u64 at_vaddr)
 		xpmem_ap_deref(ap);
 		mutex_unlock(&att->mutex);
 		xpmem_att_deref(att);
-		up_write(&current->mm->mmap_sem);
+		up_write(LOCK_FIELD(&current->mm));
 		return -EACCES;
 	}
 
@@ -631,7 +637,7 @@ xpmem_detach(u64 at_vaddr)
 
 	/* NTH: drop the current mm semaphore before calling vm_munmap (which will
 	 * call down_write on the same semaphore) */
-	up_write(&current->mm->mmap_sem);
+	up_write(LOCK_FIELD(&current->mm));
 	ret = vm_munmap(vma->vm_start, att->at_size);
 	DBUG_ON(ret != 0);
 
@@ -667,7 +673,7 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	mm = current->mm ? current->mm : att->mm;
 
 	/* must lock mmap_sem before att's sema to prevent deadlock */
-	down_write(&mm->mmap_sem);
+	down_write(LOCK_FIELD(&mm));
 	mutex_lock(&att->mutex);
 
 	/* ensure we aren't racing with MMU notifier PTE cleanup */
@@ -676,7 +682,7 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	if (att->flags & XPMEM_FLAG_DESTROYING) {
 		mutex_unlock(&att->invalidate_mutex);
 		mutex_unlock(&att->mutex);
-		up_write(&mm->mmap_sem);
+		up_write(LOCK_FIELD(&mm));
 		return;
 	}
 	att->flags |= XPMEM_FLAG_DESTROYING;
@@ -688,7 +694,7 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	if (!vma || vma->vm_start > att->at_vaddr) {
 		DBUG_ON(1);
 		mutex_unlock(&att->mutex);
-		up_write(&mm->mmap_sem);
+		up_write(LOCK_FIELD(&mm));
 		return;
 	}
 	DBUG_ON(!xpmem_is_vm_ops_set(vma));
@@ -707,7 +713,7 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 
 	/* NTH: drop the semaphore and attachment lock before calling vm_munmap */
 	mutex_unlock(&att->mutex);
-	up_write(&mm->mmap_sem);
+	up_write(LOCK_FIELD(&mm));
 
 	/* NTH: if the current task does not have a memory descriptor
 	 * then there is nothing more to do. the memory mapping should
@@ -751,7 +757,7 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 		}
 	} else {
 		/* Must lock mmap_sem before att's sema to prevent deadlock. */
-		down_read(&att->mm->mmap_sem);
+		down_read(LOCK_FIELD(&att->mm));
 		mutex_lock(&att->mutex);
 	}
 
@@ -832,7 +838,7 @@ out:
 		mutex_unlock(&att->invalidate_mutex);
 	} else {
 		mutex_unlock(&att->mutex);
-		up_read(&att->mm->mmap_sem);
+		up_read(LOCK_FIELD(&att->mm));
 	}
 }
 
