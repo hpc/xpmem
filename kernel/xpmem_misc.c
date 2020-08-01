@@ -290,11 +290,11 @@ xpmem_debug_printk_procfs_write(struct file *file, const char __user *buffer,
 				size_t count, loff_t *ppos)
 {
 	char buf;
-	
+
 	if(copy_from_user(&buf, buffer, 1))
 		return -EFAULT;
 
-	if (buf == '0') 
+	if (buf == '0')
 		xpmem_debug_on = 0;
 	else if (buf == '1')
 		xpmem_debug_on = 1;
@@ -315,6 +315,15 @@ xpmem_debug_printk_procfs_open(struct inode *inode, struct file *file)
 	return single_open(file, xpmem_debug_printk_procfs_show, NULL);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)
+struct proc_ops xpmem_debug_printk_procfs_ops = {
+	.proc_lseek		= seq_lseek,
+	.proc_read		= seq_read,
+	.proc_write		= xpmem_debug_printk_procfs_write,
+	.proc_open		= xpmem_debug_printk_procfs_open,
+	.proc_release	= single_release,
+};
+#else
 struct file_operations xpmem_debug_printk_procfs_ops = {
 	.owner		= THIS_MODULE,
 	.llseek		= seq_lseek,
@@ -323,3 +332,4 @@ struct file_operations xpmem_debug_printk_procfs_ops = {
 	.open		= xpmem_debug_printk_procfs_open,
 	.release	= single_release,
 };
+#endif /* kernel 5.6 */

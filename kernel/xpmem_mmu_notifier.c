@@ -16,6 +16,17 @@
 #include <linux/mm.h>
 #include <linux/cdev.h>
 #include <linux/percpu.h>
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
+/*
+ * This is not being picked up
+ *
+ */
+extern void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
+                                unsigned long end, unsigned int stride_shift,
+                                bool freed_tables);
+#endif
 
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
