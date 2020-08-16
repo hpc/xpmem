@@ -5,7 +5,7 @@
  *
  * Copyright (c) 2004-2007 Silicon Graphics, Inc.  All Rights Reserved.
  * Copyright 2009, 2014 Cray Inc. All Rights Reserved
- * Copyright 2016-2017 ARM Inc. All Rights Reserved
+ * Copyright 2016-2020 Arm Inc. All Rights Reserved
  * Copyright (c) 2016-2018 Nathan Hjelm <hjelmn@cs.unm.edu>
  */
 
@@ -621,6 +621,7 @@ xpmem_unpin_procfs_open(struct inode *inode, struct file *file)
 	return single_open(file, xpmem_unpin_procfs_show, PDE_DATA(inode));
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,6,0)
 struct file_operations xpmem_unpin_procfs_ops = {
 	.owner		= THIS_MODULE,
 	.llseek		= seq_lseek,
@@ -629,3 +630,12 @@ struct file_operations xpmem_unpin_procfs_ops = {
 	.open		= xpmem_unpin_procfs_open,
 	.release	= single_release,
 };
+#else
+const struct proc_ops xpmem_unpin_procfs_ops = {
+	.proc_lseek		= seq_lseek,
+	.proc_read		= seq_read,
+	.proc_write		= xpmem_unpin_procfs_write,
+	.proc_open		= xpmem_unpin_procfs_open,
+	.proc_release		= single_release,
+};
+#endif
