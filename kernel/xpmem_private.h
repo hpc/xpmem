@@ -329,6 +329,21 @@ static inline struct xpmem_thread_group *__xpmem_tg_ref_by_tgid_nolock(pid_t tgi
 #define xpmem_tg_ref_by_tgid_all(t)           __xpmem_tg_ref_by_tgid(t, 1)
 #define xpmem_tg_ref_by_tgid_nolock(t)        __xpmem_tg_ref_by_tgid_nolock(t, 0)
 #define xpmem_tg_ref_by_tgid_all_nolock(t)    __xpmem_tg_ref_by_tgid_nolock(t, 1)
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,8,0)
+#define xpmem_mmap_read_unlock(_mm)	up_read(&(_mm)->mmap_sem)
+#define xpmem_mmap_write_unlock(_mm)	up_write(&(_mm)->mmap_sem)
+#define xpmem_mmap_read_lock(_mm)	down_read(&(_mm)->mmap_sem)
+#define xpmem_mmap_write_lock(_mm)	down_write(&(_mm)->mmap_sem)
+#define xpmem_mmap_read_trylock(_mm)	down_read_trylock(&(_mm)->mmap_sem)
+#else
+#define xpmem_mmap_read_unlock(_mm)	mmap_read_unlock(_mm)
+#define xpmem_mmap_write_unlock(_mm)	mmap_write_unlock(_mm)
+#define xpmem_mmap_read_lock(_mm)	mmap_read_lock(_mm)
+#define xpmem_mmap_write_lock(_mm)	mmap_write_lock(_mm)
+#define xpmem_mmap_read_trylock(_mm)	mmap_read_trylock(_mm)
+#endif
+
 extern struct xpmem_thread_group *xpmem_tg_ref_by_segid(xpmem_segid_t);
 extern struct xpmem_thread_group *xpmem_tg_ref_by_apid(xpmem_apid_t);
 extern void xpmem_tg_deref(struct xpmem_thread_group *);
