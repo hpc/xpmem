@@ -9,7 +9,7 @@
  *                         reserved.
  * Copyright (c) 2019      Google, LLC. All rights reserved.
  * Copyright (c) 2019      Nathan Hjelm. All rights reserved.
- * Copyright 2017 ARM, Inc. All Rights Reserved
+ * Copyright (c) 2017-2020 ARM, Inc. All Rights Reserved
  */
 
 /*
@@ -125,7 +125,7 @@ xpmem_close_handler(struct vm_area_struct *vma)
 		       remaining_vma->vm_start > remaining_vaddr ||
 		       remaining_vma->vm_private_data != vma->vm_private_data);
 
-		/* this should be safe (we have the mmap_sem write-locked) */
+		/* this should be safe (we have the mmap_sem/mmap_lock write-locked) */
 		remaining_vma->vm_private_data = NULL;
 		remaining_vma->vm_ops = NULL;
 
@@ -228,20 +228,20 @@ xpmem_fault_handler(struct vm_area_struct *vma, struct vm_fault *vmf)
 	xpmem_tg_ref(seg_tg);
 
 	/*
-	 * The faulting thread has its mmap_sem locked on entrance to this
+	 * The faulting thread has its mmap_sem/mmap_lock locked on entrance to this
 	 * fault handler. In order to supply the missing page we will need
 	 * to get access to the segment that has it, as well as lock the
-	 * mmap_sem of the thread group that owns the segment should it be
+	 * mmap_sem/mmap_lock of the thread group that owns the segment should it be
 	 * different from the faulting thread's. Together these provide the
 	 * potential for a deadlock, which we attempt to avoid in what follows.
 	 */
 
 	ret = xpmem_seg_down_read(seg_tg, seg, 1, 0);
 	if (ret == -EAGAIN) {
-		/* to avoid possible deadlock drop current->mm->mmap_sem */
-		up_read(&current->mm->mmap_sem);
+		/* to avoid possible deadlock drop current->mm->mmap_sem/mmap_lock */
+		xpmem_mmap_read_unlock(current->mm);
 		ret = xpmem_seg_down_read(seg_tg, seg, 1, 1);
-		down_read(&current->mm->mmap_sem);
+		xpmem_mmap_read_lock(current->mm);
 		vma_verification_needed = 1;
 	}
 	if (ret != 0)
@@ -249,22 +249,22 @@ xpmem_fault_handler(struct vm_area_struct *vma, struct vm_fault *vmf)
 
 	if (seg_tg->mm != current->mm) {
 		/*
-		 * Lock the seg's thread group's mmap_sem in a deadlock
+		 * Lock the seg's thread group's mmap_sem/mmap_lock in a deadlock
 		 * safe manner. Get the locks in a consistent order by
 		 * getting the smaller address first.
 		 */
 		if (current->mm < seg_tg->mm) {
-			down_read(&seg_tg->mm->mmap_sem);
-		} else if (!down_read_trylock(&seg_tg->mm->mmap_sem)) {
-			up_read(&current->mm->mmap_sem);
-			down_read(&seg_tg->mm->mmap_sem);
-			down_read(&current->mm->mmap_sem);
+			xpmem_mmap_read_lock(seg_tg->mm);
+		} else if (!xpmem_mmap_read_trylock(seg_tg->mm)) {
+			xpmem_mmap_read_unlock(current->mm);
+			xpmem_mmap_read_lock(seg_tg->mm);
+			xpmem_mmap_read_lock(current->mm);
 			vma_verification_needed = 1;
 		}
 		seg_tg_mmap_sem_locked = 1;
 	}
 
-	/* verify vma hasn't changed due to dropping current->mm->mmap_sem */
+	/* verify vma hasn't changed due to dropping current->mm->mmap_sem/mmap_lock */
 	if (vma_verification_needed) {
 		struct vm_area_struct *retry_vma;
 
@@ -342,7 +342,7 @@ out_1:
 	}
 out:
 	if (seg_tg_mmap_sem_locked)
-		up_read(&seg_tg->mm->mmap_sem);
+		xpmem_mmap_read_unlock(seg_tg->mm);
 
 	if (att_locked)
 		mutex_unlock(&att->mutex);
@@ -474,7 +474,7 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 	xpmem_att_not_destroyable(att);
 	xpmem_att_ref(att);
 
-	/* must lock mmap_sem before att's sema to prevent deadlock */
+	/* must lock mmap_sem/mmap_lock before att's sema to prevent deadlock */
 	mutex_lock(&att->mutex);	/* this will never block */
 
 	/* link attach structure to its access permit's att list */
@@ -495,10 +495,10 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 	if (flags & MAP_FIXED) {
 		struct vm_area_struct *existing_vma;
 
-		down_write(&current->mm->mmap_sem);
+		xpmem_mmap_write_lock(current->mm);
 		existing_vma = find_vma_intersection(current->mm, vaddr,
 						     vaddr + size);
-		up_write(&current->mm->mmap_sem);
+		xpmem_mmap_write_unlock(current->mm);
 		for ( ; existing_vma && existing_vma->vm_start < vaddr + size
 				; existing_vma = existing_vma->vm_next) {
 			if (xpmem_is_vm_ops_set(existing_vma)) {
@@ -515,9 +515,9 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 	}
 	att->at_vaddr = at_vaddr;
 
-	down_write(&current->mm->mmap_sem);
+	xpmem_mmap_write_lock(current->mm);
 	vma = find_vma(current->mm, at_vaddr);
-	up_write(&current->mm->mmap_sem);
+	xpmem_mmap_write_unlock(current->mm);
 
 	vma->vm_private_data = att;
 	vma->vm_flags |=
@@ -568,25 +568,25 @@ xpmem_detach(u64 at_vaddr)
 	struct xpmem_attachment *att;
 	struct vm_area_struct *vma;
 
-	down_write(&current->mm->mmap_sem);
+	xpmem_mmap_write_lock(current->mm);
 
 	/* find the corresponding vma */
 	vma = find_vma(current->mm, at_vaddr);
 	if (!vma || vma->vm_start > at_vaddr) {
-		up_write(&current->mm->mmap_sem);
+		xpmem_mmap_write_unlock(current->mm);
 		return 0;
 	}
 
 	att = (struct xpmem_attachment *)vma->vm_private_data;
 	if (!xpmem_is_vm_ops_set(vma) || att == NULL) {
-		up_write(&current->mm->mmap_sem);
+		xpmem_mmap_write_unlock(current->mm);
 		return -EINVAL;
 	}
 	xpmem_att_ref(att);
 
 	if (mutex_lock_killable(&att->mutex)) {
 		xpmem_att_deref(att);
-		up_write(&current->mm->mmap_sem);
+		xpmem_mmap_write_unlock(current->mm);
 		return -EINTR;
 	}
 
@@ -597,7 +597,7 @@ xpmem_detach(u64 at_vaddr)
 		mutex_unlock(&att->invalidate_mutex);
 		mutex_unlock(&att->mutex);
 		xpmem_att_deref(att);
-		up_write(&current->mm->mmap_sem);
+		xpmem_mmap_write_unlock(current->mm);
 		return 0;
 	}
 	att->flags |= XPMEM_FLAG_DESTROYING;
@@ -612,7 +612,7 @@ xpmem_detach(u64 at_vaddr)
 		xpmem_ap_deref(ap);
 		mutex_unlock(&att->mutex);
 		xpmem_att_deref(att);
-		up_write(&current->mm->mmap_sem);
+		xpmem_mmap_write_unlock(current->mm);
 		return -EACCES;
 	}
 
@@ -631,7 +631,7 @@ xpmem_detach(u64 at_vaddr)
 
 	/* NTH: drop the current mm semaphore before calling vm_munmap (which will
 	 * call down_write on the same semaphore) */
-	up_write(&current->mm->mmap_sem);
+	xpmem_mmap_write_unlock(current->mm);
 	ret = vm_munmap(vma->vm_start, att->at_size);
 	DBUG_ON(ret != 0);
 
@@ -667,7 +667,7 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	mm = current->mm ? current->mm : att->mm;
 
 	/* must lock mmap_sem before att's sema to prevent deadlock */
-	down_write(&mm->mmap_sem);
+	xpmem_mmap_write_lock(mm);
 	mutex_lock(&att->mutex);
 
 	/* ensure we aren't racing with MMU notifier PTE cleanup */
@@ -676,7 +676,7 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	if (att->flags & XPMEM_FLAG_DESTROYING) {
 		mutex_unlock(&att->invalidate_mutex);
 		mutex_unlock(&att->mutex);
-		up_write(&mm->mmap_sem);
+		xpmem_mmap_write_unlock(mm);
 		return;
 	}
 	att->flags |= XPMEM_FLAG_DESTROYING;
@@ -688,7 +688,7 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	if (!vma || vma->vm_start > att->at_vaddr) {
 		DBUG_ON(1);
 		mutex_unlock(&att->mutex);
-		up_write(&mm->mmap_sem);
+		xpmem_mmap_write_unlock(mm);
 		return;
 	}
 	DBUG_ON(!xpmem_is_vm_ops_set(vma));
@@ -707,7 +707,7 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 
 	/* NTH: drop the semaphore and attachment lock before calling vm_munmap */
 	mutex_unlock(&att->mutex);
-	up_write(&mm->mmap_sem);
+	xpmem_mmap_write_unlock(mm);
 
 	/* NTH: if the current task does not have a memory descriptor
 	 * then there is nothing more to do. the memory mapping should
@@ -730,7 +730,7 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 							int from_mmu)
 {
 	/*
-	 * This function should ideally acquire both att->mm->mmap_sem
+	 * This function should ideally acquire both att->mm->mmap_sem/mmap_lock
 	 * and att->mutex.  However, if it is called from a MMU notifier
 	 * function, we can not sleep (something both down_read() and
 	 * mutex_lock() can do).  For MMU notifier callouts, we try to
@@ -740,7 +740,7 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 	 * from underneath us, and the prior call to xpmem_att_ref() before
 	 * entering the function unsures that att will be valid.
 	 *
-	 * Must lock mmap_sem before att's sema to prevent deadlock.
+	 * Must lock mmap_sem/mmap_lock before att's sema to prevent deadlock.
 	 */
 
 	if (from_mmu) {
@@ -750,8 +750,8 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 			return;
 		}
 	} else {
-		/* Must lock mmap_sem before att's sema to prevent deadlock. */
-		down_read(&att->mm->mmap_sem);
+		/* Must lock mmap_sem/mmap_lock before att's sema to prevent deadlock. */
+		xpmem_mmap_read_lock(att->mm);
 		mutex_lock(&att->mutex);
 	}
 
@@ -812,7 +812,7 @@ xpmem_clear_PTEs_of_att(struct xpmem_attachment *att, u64 start, u64 end,
 
 		/*
 		 * Clear the PTEs, using the vma out of the att if we
-		 * couldn't acquire the mmap_sem.
+		 * couldn't acquire the mmap_sem/mmap_lock
 		 */
 		if (from_mmu)
 			vma = att->at_vma;
@@ -832,7 +832,7 @@ out:
 		mutex_unlock(&att->invalidate_mutex);
 	} else {
 		mutex_unlock(&att->mutex);
-		up_read(&att->mm->mmap_sem);
+		xpmem_mmap_read_unlock(att->mm);
 	}
 }
 
