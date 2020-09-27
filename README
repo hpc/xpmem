@@ -1,7 +1,7 @@
 # Introduction
 This is an experimental version of XPMEM based on a version provided by Cray
 and uploaded to https://code.google.com/p/xpmem. This version supports any
-kernel 3.12 and newer (tested up to 5.8.x). Keep in mind there may be bugs and
+Linux kernel 3.12 and newer (tested up to 5.8.x). Keep in mind there may be bugs and
 this version may cause kernel panics, code crashes, eat your cat, etc.
 
 XPMEM is a Linux kernel module that enables a process to map the
