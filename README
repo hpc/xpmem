@@ -1,22 +1,8 @@
-
-***************************************************************************
-***************************************************************************
-***************************************************************************
-
-If you wish to contribute to or want to see the latest version of XPMEM
-the new repository is @ http://gitlab.com/hjelmn/xpmem. I do not intent
-to continue to use github for this repository.
-
-***************************************************************************
-***************************************************************************
-***************************************************************************
-
-
-
-This is an experimental version of XPMEM based on a version provided by
-Cray and uploaded to https://code.google.com/p/xpmem. This version supports
-any kernel 3.12 and newer. Keep in mind there may be bugs and this version
-may cause kernel panics, code crashes, eat your cat, etc.
+# Introduction
+This is an experimental version of XPMEM based on a version provided by Cray
+and uploaded to https://code.google.com/p/xpmem. This version supports any
+Linux kernel 3.12 and newer (tested up to 5.8.x). Keep in mind there may be bugs and
+this version may cause kernel panics, code crashes, eat your cat, etc.
 
 XPMEM is a Linux kernel module that enables a process to map the
 memory of another process into its virtual address space. Source code
@@ -51,3 +37,8 @@ and pages are mapped between address spaces on demand. A segfault will
 occur if the source process or any other process mapping the region
 tries to access an unallocated (invalid) virtual address in the
 region.
+
+# Known issues
+
+* Memory regions mapped with XPMEM cannot be pinned with
+  [ibv_dereg_mr](https://linux.die.net/man/3/ibv_reg_mr)
