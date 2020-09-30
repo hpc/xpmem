@@ -36,6 +36,13 @@ AC_PROG_GCC_TRADITIONAL
 AC_FUNC_MMAP
 AC_CHECK_FUNCS([getpagesize memset])
 
+AC_ARG_WITH([module-prefix],
+            [AS_HELP_STRING([--with-module-prefix],
+                            [Prefix for kernel module installation])],
+            [],
+            [with_module_prefix=$prefix])
+
+AC_SUBST([moduleprefix], [${with_module_prefix%%/}])
 AC_SUBST([initdir], [${sysconfdir}/init.d])
 AC_SUBST([ldsoconfdir], [/etc/ld.so.conf.d])
 AC_SUBST([pkgconfigdir], [${libdir}/pkgconfig])

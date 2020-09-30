@@ -1,6 +1,6 @@
 AM_CPPFLAGS = -I@top_srcdir@/include
 
-moduledir = $(libdir)/modules/@kernelvers@/
+moduledir = @moduleprefix@/lib/modules/@kernelvers@/kernel/xpmem
 KERNEL_PATH=@kerneldir@
 init_SCRIPTS = xpmem
 MODULE=xpmem.ko
