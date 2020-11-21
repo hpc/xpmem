@@ -258,7 +258,10 @@ xpmem_pin_page(struct xpmem_thread_group *tg, struct task_struct *src_task,
 	}
 
 	/* get_user_pages()/get_user_pages_remote() faults and pins the page */
-#if   LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if   LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
+	ret = get_user_pages_remote (src_mm, vaddr, 1, FOLL_WRITE | FOLL_FORCE,
+					&page, NULL, NULL);
+#elif   LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
         ret = get_user_pages_remote (src_task, src_mm, vaddr, 1, FOLL_WRITE | FOLL_FORCE,
                                      &page, NULL, NULL);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
