@@ -229,6 +229,7 @@ xpmem_pin_page(struct xpmem_thread_group *tg, struct task_struct *src_task,
 	struct page *page;
 	struct vm_area_struct *vma;
 	cpumask_t saved_mask = CPU_MASK_NONE;
+	int foll_write;
 
 	vma = find_vma(src_mm, vaddr);
 	if (!vma || vma->vm_start > vaddr)
@@ -257,20 +258,25 @@ xpmem_pin_page(struct xpmem_thread_group *tg, struct task_struct *src_task,
 		set_cpus_allowed_ptr(current, cpumask_of(task_cpu(src_task)));
 	}
 
+	/* Map with write permissions only if source VMA is writeable */
+	foll_write = (vma->vm_flags & VM_WRITE) ? FOLL_WRITE : 0;
+
 	/* get_user_pages()/get_user_pages_remote() faults and pins the page */
 #if   LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
-	ret = get_user_pages_remote (src_mm, vaddr, 1, FOLL_WRITE | FOLL_FORCE,
-					&page, NULL, NULL);
+	ret = get_user_pages_remote (src_mm, vaddr, 1, foll_write, &page, NULL,
+				     NULL);
 #elif   LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
-        ret = get_user_pages_remote (src_task, src_mm, vaddr, 1, FOLL_WRITE | FOLL_FORCE,
-                                     &page, NULL, NULL);
+	ret = get_user_pages_remote (src_task, src_mm, vaddr, 1, foll_write,
+				     &page, NULL, NULL);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
-	ret = get_user_pages_remote (src_task, src_mm, vaddr, 1, FOLL_WRITE | FOLL_FORCE,
+	ret = get_user_pages_remote (src_task, src_mm, vaddr, 1, foll_write,
 				     &page, NULL);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
-	ret = get_user_pages_remote (src_task, src_mm, vaddr, 1, 1, 1, &page, NULL);
+	ret = get_user_pages_remote (src_task, src_mm, vaddr, 1, foll_write, 0,
+				     &page, NULL);
 #else
-	ret = get_user_pages (src_task, src_mm, vaddr, 1, 1, 1, &page, NULL);
+	ret = get_user_pages (src_task, src_mm, vaddr, 1, foll_write, 0, &page,
+			      NULL);
 #endif
 	if (!cpumask_empty(&saved_mask))
 		set_cpus_allowed_ptr(current, &saved_mask);
