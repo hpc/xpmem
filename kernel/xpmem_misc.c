@@ -15,6 +15,7 @@
 #include <linux/mm.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <xpmem.h>
 #include "xpmem_private.h"

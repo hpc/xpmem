@@ -13,6 +13,7 @@
 
 #include <linux/err.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/stat.h>
 #include "xpmem_internal.h"
 #include "xpmem_private.h"

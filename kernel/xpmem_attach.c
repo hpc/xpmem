@@ -20,6 +20,7 @@
 #include <linux/mm.h>
 #include <linux/mman.h>
 #include <linux/file.h>
+#include <linux/slab.h>
 #include "xpmem_internal.h"
 #include "xpmem_private.h"
 
