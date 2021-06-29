@@ -17,7 +17,6 @@
 #include <linux/cdev.h>
 #include <linux/percpu.h>
 
-#include <asm/tlb.h>
 #include <asm/tlbflush.h>
 #include <asm/uaccess.h>
 
