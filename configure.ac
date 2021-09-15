@@ -48,6 +48,7 @@ AC_SUBST([ldsoconfdir], [/etc/ld.so.conf.d])
 AC_SUBST([pkgconfigdir], [${libdir}/pkgconfig])
 
 AC_PATH_KERNEL_SOURCE
+AC_KERNEL_CHECKS
 
 AC_CONFIG_FILES([Makefile
                  cray-xpmem.pc
