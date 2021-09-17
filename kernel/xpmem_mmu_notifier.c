@@ -167,20 +167,19 @@ xpmem_mmu_release(struct mmu_notifier *mn, struct mm_struct *mm)
 	 * Some other process may be the last to release the mm, so
 	 * validate it against the value stored in the tg before continuing.
 	 */
-	tg = xpmem_tg_ref_by_tgid(current->tgid);
-	if (!IS_ERR(tg)) {
-		if (tg->mm == mm) {
-			/*
-			 * Normal case, process is removing its own address
-			 * space.
-			 */
-			XPMEM_DEBUG("self: tg->mm=%p", tg->mm);
-			xpmem_teardown(tg);
-			return;
-		} else {
-			/* Abnormal case, must continue with code below. */
-			xpmem_tg_deref(tg);
-		}
+	tg = container_of(mn, struct xpmem_thread_group, mmu_not);
+	xpmem_tg_ref(tg);
+	if (tg->mm == mm) {
+		/*
+		 * Normal case, process is removing its own address
+		 * space.
+		 */
+		XPMEM_DEBUG("self: tg->mm=%p", tg->mm);
+		xpmem_teardown(tg);
+		return;
+	} else {
+		/* Abnormal case, must continue with code below. */
+		xpmem_tg_deref(tg);
 	}
 
 	/*
