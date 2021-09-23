@@ -19,10 +19,14 @@ EXTRA_DIST = ${module_sources}
 
 module_DATA = $(MODULE)
 
+
+KCPPFLAGS = -include @abs_top_builddir@/config.h -I@abs_top_srcdir@/include
+export KCPPFLAGS
+
 $(MODULE): ${module_sources}
-	$(MAKE) -C $(KERNEL_PATH) M=$(abs_builddir)
+	$(MAKE) -C $(KERNEL_PATH) M=$(abs_builddir) src=$(abs_srcdir)
 
 clean-local:
-	$(MAKE) -C $(KERNEL_PATH) M=$(abs_builddir) clean
+	$(MAKE) -C $(KERNEL_PATH) M=$(abs_builddir) src=$(abs_srcdir) clean
 
 .PHONY: $(MODULE)
