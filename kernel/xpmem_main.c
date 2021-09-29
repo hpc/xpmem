@@ -109,12 +109,10 @@ xpmem_open(struct inode *inode, struct file *file)
 	}
 
 	snprintf(tgid_string, XPMEM_TGID_STRING_LEN, "%d", current->tgid);
-	spin_lock(&xpmem_unpin_procfs_lock);
 	unpin_entry = proc_create_data(tgid_string, 0644,
 				       xpmem_unpin_procfs_dir,
 				       &xpmem_unpin_procfs_ops,
 				       (void *)(unsigned long)current->tgid);
-	spin_unlock(&xpmem_unpin_procfs_lock);
 	if (unpin_entry != NULL) {
 		proc_set_user(unpin_entry, current_uid(), current_gid());
 	}
@@ -257,9 +255,7 @@ xpmem_flush(struct file *file, fl_owner_t owner)
 	 * and the distruction of the thread group object.
 	 */
 	snprintf(tgid_string, XPMEM_TGID_STRING_LEN, "%d", tg->tgid);
-	spin_lock(&xpmem_unpin_procfs_lock);
 	remove_proc_entry(tgid_string, xpmem_unpin_procfs_dir);
-	spin_unlock(&xpmem_unpin_procfs_lock);
 
 	xpmem_destroy_tg(tg);
 
@@ -419,7 +415,6 @@ xpmem_init(void)
 	}
 
 	/* create the /proc interface directory (/proc/xpmem) */
-	spin_lock_init(&xpmem_unpin_procfs_lock);
 	xpmem_unpin_procfs_dir = proc_mkdir(XPMEM_MODULE_NAME, NULL);
 	if (xpmem_unpin_procfs_dir == NULL) {
 		ret = -EBUSY;

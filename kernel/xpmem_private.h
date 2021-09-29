@@ -294,7 +294,6 @@ extern void xpmem_unblock_recall_PFNs(struct xpmem_thread_group *);
 extern int xpmem_fork_begin(void);
 extern int xpmem_fork_end(void);
 #define XPMEM_TGID_STRING_LEN	11
-extern spinlock_t xpmem_unpin_procfs_lock;
 extern struct proc_dir_entry *xpmem_unpin_procfs_dir;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,6,0)
 extern struct file_operations xpmem_unpin_procfs_ops;
