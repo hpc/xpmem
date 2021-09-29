@@ -121,7 +121,7 @@ xpmem_close_handler(struct vm_area_struct *vma)
 		 * to XPMEM.
 		 */
 		remaining_vaddr = vma->vm_end;
-		remaining_vma = find_vma(current->mm, remaining_vaddr);
+		remaining_vma = find_vma(att->mm, remaining_vaddr);
 		BUG_ON(!remaining_vma ||
 		       remaining_vma->vm_start > remaining_vaddr ||
 		       remaining_vma->vm_private_data != vma->vm_private_data);
@@ -138,7 +138,7 @@ xpmem_close_handler(struct vm_area_struct *vma)
 	 * Find the remaining vma left over by the unmap split and fix
 	 * up the corresponding xpmem_attachment structure.
 	 */
-	remaining_vma = find_vma(current->mm, remaining_vaddr);
+	remaining_vma = find_vma(att->mm, remaining_vaddr);
 	BUG_ON(!remaining_vma ||
 	       remaining_vma->vm_start > remaining_vaddr ||
 	       remaining_vma->vm_private_data != vma->vm_private_data);
@@ -156,11 +156,13 @@ out:
 	/* cause the demise of the current thread group */
 	XPMEM_DEBUG("xpmem_close_handler: unexpected unmap of XPMEM segment at "
 	       "[0x%lx - 0x%lx]\n", vma->vm_start, vma->vm_end);
+	if (att->mm == current->mm) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
-	force_sig(SIGKILL);
+		force_sig(SIGKILL);
 #else
-	force_sig(SIGKILL, current);
+		force_sig(SIGKILL, current);
 #endif
+	}
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
@@ -665,7 +667,15 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	XPMEM_DEBUG("detaching attr %p. current->mm = %p, att->mm = %p", att,
 		    (void *) current->mm, (void *) att->mm);
 
-	mm = current->mm ? current->mm : att->mm;
+	if ((current->mm != NULL) && (att->mm != NULL)) {
+		mm = att->mm;
+	}
+	else if (current->mm == NULL) {
+		mm = att->mm;
+	}
+	else {
+		mm = current->mm;
+	}
 
 	/* must lock mmap_sem before att's sema to prevent deadlock */
 	xpmem_mmap_write_lock(mm);
@@ -710,10 +720,11 @@ xpmem_detach_att(struct xpmem_access_permit *ap, struct xpmem_attachment *att)
 	mutex_unlock(&att->mutex);
 	xpmem_mmap_write_unlock(mm);
 
-	/* NTH: if the current task does not have a memory descriptor
-	 * then there is nothing more to do. the memory mapping should
-	 * go away automatically when the memory descriptor does. */
-	if (NULL != current->mm) {
+	/* If the current memory descriptor and the xpmem_attachment
+	 * memory descriptor do not match then there is nothing more to do.
+	 * the memory mapping should go away automatically when the
+	 * memory descriptor does. */
+	if (mm == current->mm) {
 		ret = vm_munmap(vma->vm_start, att->at_size);
 		DBUG_ON(ret != 0);
 	}
