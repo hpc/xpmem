@@ -545,7 +545,6 @@ xpmem_fork_end(void)
 	return 0;
 }
 
-spinlock_t xpmem_unpin_procfs_lock;
 struct proc_dir_entry *xpmem_unpin_procfs_dir;
 
 static int
