@@ -90,3 +90,32 @@ AC_DEFUN([AC_PATH_KERNEL_SOURCE],
   AM_CONDITIONAL([BUILD_KERNEL_MODULE], [test $build_kernel_module = 1])
 ]
 )
+
+AC_DEFUN([AC_KERNEL_CHECKS],
+[
+  srcarch=$(uname -m | sed -e s/i.86/x86/ \
+                           -e s/x86_64/x86/ \
+                           -e s/ppc.*/powerpc/ \
+                           -e s/powerpc64/powerpc/ \
+                           -e s/aarch64.*/arm64/ \
+                           -e s/sparc32.*/sparc/ \
+                           -e s/sparc64.*/sparc/ \
+                           -e s/s390x/s390/)
+  save_CPPFLAGS="$CPPFLAGS"
+  CPPFLAGS="-include $kerneldir/include/linux/compiler_types.h \
+            -include $kerneldir/include/linux/kconfig.h \
+            -D__KERNEL__ \
+            -I$kerneldir/include \
+            -I$kerneldir/include/uapi \
+            -I$kerneldir/arch/$srcarch/include \
+            -I$kerneldir/arch/$srcarch/include/uapi \
+            -I$kerneldir/arch/$srcarch/include/generated \
+            -I$kerneldir/arch/$srcarch/include/generated/uapi \
+            $CPPFLAGS"
+
+  AC_CHECK_MEMBERS([struct task_struct.cpus_mask], [], [],
+                   [[#include <linux/sched.h>]])
+
+  CPPFLAGS="$save_CPPFLAGS"
+]
+)
