@@ -52,6 +52,10 @@
 #error Unsuported architecture
 #endif
 
+#ifndef task_is_stopped
+#define task_is_stopped(task) ((task)->state == TASK_STOPPED)
+#endif
+
 static pte_t *
 xpmem_hugetlb_pte(pte_t *pte, struct mm_struct *mm, u64 vaddr, u64 *offset)
 {
@@ -562,7 +566,7 @@ xpmem_is_thread_group_stopped(struct xpmem_thread_group *tg)
 	rcu_read_lock();
 	do {
 		if (!(task->flags & PF_EXITING) &&
-		    task->state != TASK_STOPPED) {
+		    !task_is_stopped(task)) {
 			rcu_read_unlock();
 			return 0;
 		}
