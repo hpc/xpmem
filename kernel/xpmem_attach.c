@@ -62,6 +62,7 @@ xpmem_close_handler(struct vm_area_struct *vma)
 	u64 remaining_vaddr;
 	struct xpmem_access_permit *ap;
 	struct xpmem_attachment *att;
+	bool send_sig = false;
 
 	att = (struct xpmem_attachment *)vma->vm_private_data;
 	if (att == NULL) {
@@ -150,13 +151,16 @@ xpmem_close_handler(struct vm_area_struct *vma)
 	vma->vm_private_data = NULL;
 
 out:
+	if (att->mm == current->mm) {
+		send_sig = true;
+	}
 	mutex_unlock(&att->mutex);
 	xpmem_att_deref(att);
 
 	/* cause the demise of the current thread group */
 	XPMEM_DEBUG("xpmem_close_handler: unexpected unmap of XPMEM segment at "
 	       "[0x%lx - 0x%lx]\n", vma->vm_start, vma->vm_end);
-	if (att->mm == current->mm) {
+	if (send_sig) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
 		force_sig(SIGKILL);
 #else
