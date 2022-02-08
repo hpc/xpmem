@@ -102,8 +102,8 @@ AC_DEFUN([AC_KERNEL_CHECKS],
                            -e s/sparc64.*/sparc/ \
                            -e s/s390x/s390/)
   save_CPPFLAGS="$CPPFLAGS"
-  CPPFLAGS="-include $kerneldir/include/linux/compiler_types.h \
-            -include $kerneldir/include/linux/kconfig.h \
+  CPPFLAGS="-include $kerneldir/include/linux/kconfig.h \
+            -include $kerneldir/include/linux/compiler_types.h \
             -D__KERNEL__ \
             -I$kerneldir/include \
             -I$kerneldir/include/uapi \
