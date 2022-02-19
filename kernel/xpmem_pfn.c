@@ -29,8 +29,10 @@
 #define num_of_pages(v, s) \
 		(((offset_in_page(v) + (s)) + (PAGE_SIZE - 1)) >> PAGE_SHIFT)
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
-#define PDE_DATA(inode)	((PDE(inode)->data))
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,17,0)
+#define pde_data(indoe) PDE_DATA(inode)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+#define pde_data(inode) ((PDE(inode)->data))
 #endif
 
 #if CONFIG_HUGETLB_PAGE
@@ -631,7 +633,7 @@ xpmem_unpin_procfs_show(struct seq_file *seq, void *offset)
 static int
 xpmem_unpin_procfs_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, xpmem_unpin_procfs_show, PDE_DATA(inode));
+	return single_open(file, xpmem_unpin_procfs_show, pde_data(inode));
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,6,0)
