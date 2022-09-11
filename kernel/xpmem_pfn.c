@@ -29,10 +29,12 @@
 #define num_of_pages(v, s) \
 		(((offset_in_page(v) + (s)) + (PAGE_SIZE - 1)) >> PAGE_SHIFT)
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,17,0)
-#define pde_data(indoe) PDE_DATA(inode)
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+#ifdef HAVE_NO_PDE_DATA_FUNC
+#ifdef HAVE_PDE_DATA_MACRO
+#define pde_data(inode) PDE_DATA(inode)
+#else
 #define pde_data(inode) ((PDE(inode)->data))
+#endif
 #endif
 
 #if CONFIG_HUGETLB_PAGE
