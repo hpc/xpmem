@@ -116,6 +116,13 @@ AC_DEFUN([AC_KERNEL_CHECKS],
   AC_CHECK_MEMBERS([struct task_struct.cpus_mask], [], [],
                    [[#include <linux/sched.h>]])
 
+  AC_CHECK_DECL(pde_data, [], [
+    AC_DEFINE([HAVE_NO_PDE_DATA_FUNC], 1, [Have pde_data()])
+    AC_CHECK_DECL(PDE_DATA, [
+      AC_DEFINE([HAVE_PDE_DATA_MACRO], 1, [Have PDE_DATA()])
+    ], [], [[#include <linux/proc_fs.h>]])
+  ], [[#include <linux/proc_fs.h>]])
+
   CPPFLAGS="$save_CPPFLAGS"
 ]
 )
