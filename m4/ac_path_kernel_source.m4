@@ -103,7 +103,7 @@ AC_DEFUN([AC_KERNEL_CHECKS],
                            -e s/s390x/s390/)
   save_CPPFLAGS="$CPPFLAGS"
   CPPFLAGS="-include $kerneldir/include/linux/kconfig.h \
-            -include $kerneldir/include/linux/compiler_types.h \
+            -include $kerneldir/include/linux/compiler.h \
             -D__KERNEL__ \
             -I$kerneldir/include \
             -I$kerneldir/include/uapi \
