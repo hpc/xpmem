@@ -123,6 +123,8 @@ AC_DEFUN([AC_KERNEL_CHECKS],
     ], [], [[#include <linux/proc_fs.h>]])
   ], [[#include <linux/proc_fs.h>]])
 
+  AC_CHECK_DECLS([vma_iter_init], [], [], [[#include <linux/mm_types.h>]])
+
   CPPFLAGS="$save_CPPFLAGS"
 ]
 )

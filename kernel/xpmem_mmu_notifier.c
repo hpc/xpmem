@@ -78,8 +78,10 @@ xpmem_invalidate_range(struct mmu_notifier *mn,
 	unsigned long start  = mnr->start;
 	unsigned long end    = mnr->end;
 #endif
+	unsigned long curr   = start;
 	struct xpmem_thread_group *seg_tg;
 	struct vm_area_struct *vma;
+	struct vma_iterator vmi;
 
 	seg_tg = container_of(mn, struct xpmem_thread_group, mmu_not);
 
@@ -99,22 +101,14 @@ xpmem_invalidate_range(struct mmu_notifier *mn,
 	if (offset_in_page(end) != 0)
 		end += PAGE_SIZE - offset_in_page(end);
 
-
 	/* NTH: Changes to the tlb code should have removed the need for gathering
 	 * the mmu here. There is not any state that needs to be restored */
 
-	vma = find_vma_intersection(mm, start, end);
-	if (vma == NULL) {
-		xpmem_invalidate_PTEs_range(seg_tg, start, end);
-		return;
-	}
-
-	for ( ; vma && vma->vm_start < end; vma = vma->vm_next) {
-		unsigned long vm_start;
+	vma_iter_init(&vmi, mm, start);
+	for_each_vma_range(vmi, vma, end) {
 		unsigned long vm_end;
 
-		/*
-		 * If the vma is XPMEM-attached memory, bail out.  XPMEM handles
+		/* Skip XPMEM-attached memory. XPMEM handles
 		 * this case outside of the MMU notifier functions and we don't
 		 * want xpmem_invalidate_range() to perform the operations a
 		 * second time and screw up page counts, etc. We can't block in
@@ -123,19 +117,19 @@ xpmem_invalidate_range(struct mmu_notifier *mn,
 		 * kernel can't rearrange the address space while a MMU notifier
 		 * callout is occurring.
 		 */
-		if (xpmem_is_vm_ops_set(vma))
+		if (!xpmem_is_vm_ops_set(vma))
 			continue;
 
-		vm_start = max(vma->vm_start, start);
-		if (vm_start >= vma->vm_end)
-			continue;
-
-		vm_end = min(vma->vm_end, end);
-		if (vm_end <= vma->vm_start)
-			continue;
-
-		xpmem_invalidate_PTEs_range(seg_tg, vm_start, vm_end);
+		/* If found an xpmem-attached VMA, invalidate the range
+		 * before its start and position 'curr' after its end */
+		vm_end = min(vma->vm_start, end);
+		if (curr < vm_end)
+			xpmem_invalidate_PTEs_range(seg_tg, curr, vm_end);
+		curr = min(vma->vm_end, end);
 	}
+
+	if (curr < end)
+		xpmem_invalidate_PTEs_range(seg_tg, curr, end);
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
