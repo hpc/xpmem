@@ -494,18 +494,18 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 	/* check if a segment is already attached in the requested area */
 	if (flags & MAP_FIXED) {
 		struct vm_area_struct *existing_vma;
+		struct vma_iterator vmi;
 
-		xpmem_mmap_write_lock(current->mm);
-		existing_vma = find_vma_intersection(current->mm, vaddr,
-						     vaddr + size);
-		xpmem_mmap_write_unlock(current->mm);
-		for ( ; existing_vma && existing_vma->vm_start < vaddr + size
-				; existing_vma = existing_vma->vm_next) {
+		xpmem_mmap_read_lock(current->mm);
+		vma_iter_init(&vmi, current->mm, vaddr);
+		for_each_vma_range(vmi, existing_vma, vaddr + size) {
 			if (xpmem_is_vm_ops_set(existing_vma)) {
+				xpmem_mmap_read_unlock(current->mm);
 				ret = -EINVAL;
 				goto out_3;
 			}
 		}
+		xpmem_mmap_read_unlock(current->mm);
 	}
 
 	at_vaddr = vm_mmap(file, vaddr, size, prot_flags, flags, offset);

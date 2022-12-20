@@ -344,6 +344,22 @@ static inline struct xpmem_thread_group *__xpmem_tg_ref_by_tgid_nolock(pid_t tgi
 #define xpmem_mmap_read_trylock(_mm)	mmap_read_trylock(_mm)
 #endif
 
+#if (!HAVE_DECL_VMA_ITER_INIT)
+struct vma_iterator {
+	struct mm_struct *mm;
+	unsigned long start;
+};
+
+#define vma_iter_init(_vmi, _mm, _start) \
+	(_vmi)->mm = _mm; \
+	(_vmi)->start = _start;
+
+#define for_each_vma_range(_vmi, _vma, _end) \
+	for ((_vma) = find_vma_intersection((_vmi).mm, (_vmi).start, (_end)); \
+	     (_vma) && (_vma)->vm_start < (_end); \
+	     (_vma) = (_vma)->vm_next)
+#endif
+
 extern struct xpmem_thread_group *xpmem_tg_ref_by_segid(xpmem_segid_t);
 extern struct xpmem_thread_group *xpmem_tg_ref_by_apid(xpmem_apid_t);
 extern void xpmem_tg_deref(struct xpmem_thread_group *);
