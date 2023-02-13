@@ -1,0 +1,30 @@
+Source: xpmem-lib
+Priority: optional
+Maintainer: Tzafrir Cohen <nvidia@cohens.org.il>
+Build-Depends: debhelper-compat (= 11)
+Standards-Version: 4.4.1
+Section: libs
+Homepage: https://github.com/openucx/xpmem/
+#Vcs-Browser: https://salsa.debian.org/debian/xpmem-lib
+#Vcs-Git: https://salsa.debian.org/debian/xpmem-lib.git
+
+Package: libxpmem-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: libxpmem0 (= ${binary:Version}), ${misc:Depends}
+Description: libxpmem - development headers
+ XPMEM is a Linux kernel module that enables a process to map the
+ memory of another process into its virtual address space.
+ .
+ This package includes development headers for the userspace library.
+
+Package: libxpmem0
+Architecture: any
+Multi-Arch: same
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: libxpmem - userspace library of XPMEM
+ XPMEM is a Linux kernel module that enables a process to map the
+ memory of another process into its virtual address space.
+ .
+ This package includes the userspace library.

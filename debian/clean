@@ -1,0 +1,3 @@
+kernel/Kbuild
+kernel/Makefile
+kernel/xpmem

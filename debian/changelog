@@ -1,0 +1,5 @@
+xpmem-lib (2.6.4.0.20221220-1) unstable; urgency=medium
+
+  * Initial release.
+
+ -- Tzafrir Cohen <nvidia@cohens.org.il>  Mon, 13 Feb 2023 17:50:36 +0200

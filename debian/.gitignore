@@ -1,0 +1,9 @@
+*.debhelper.log
+*.substvars
+.debhelper/
+autoreconf.*
+debhelper-build-stamp
+files
+libxpmem0/
+libxpmem-dev/
+tmp/

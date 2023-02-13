@@ -1,0 +1,31 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: xpmem
+Source: https://github.com/openucx/xpmem/
+
+Files: *
+Copyright: 2004-2007, Silicon Graphics, Inc.
+  2010, 2012, Cray Inc.
+  2014-2017, Los Alamos National Security, LLC. All rights
+  2017-2020, ARM, Inc.
+  2019, Google, LLC.
+  2019, Nathan Hjelm.
+License: GPL-2
+ This file is subject to the terms and conditions of the GNU General Public
+ License.  See the file "COPYING" in the main directory of this archive
+ for more details.
+ .
+ On Debian systems you can find a copy of the GNU General Public License
+ version 2 at /usr/share/common-licenses/GPL-2 .
+
+Files: lib/* include/* 
+Copyright:
+ 2004-2007, Silicon Graphics, Inc.
+ 2009 Cray, Inc.
+ 2016 Nathan Hjelm <hjelmn@cs.unm.edu>
+License: LGPL-2.1
+ This file is subject to the terms and conditions of the GNU Lesser General Public
+ License.  See the file "COPYING.LESSER" in the main directory of this archive
+ for more details.
+ .
+ On Debian systems you can find a copy of the GNU General Public License
+ version 2 at /usr/share/common-licenses/LGPL-2.1 .

@@ -1,0 +1,10 @@
+libxpmem.so.0 libxpmem0 #MINVER#
+ xpmem_attach@Base 2.6.4.0.20221220
+ xpmem_detach@Base 2.6.4.0.20221220
+ xpmem_get@Base 2.6.4.0.20221220
+ xpmem_init@Base 2.6.4.0.20221220
+ xpmem_ioctl@Base 2.6.4.0.20221220
+ xpmem_make@Base 2.6.4.0.20221220
+ xpmem_release@Base 2.6.4.0.20221220
+ xpmem_remove@Base 2.6.4.0.20221220
+ xpmem_version@Base 2.6.4.0.20221220

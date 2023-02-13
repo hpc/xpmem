@@ -1,0 +1,3 @@
+usr/include/*
+usr/lib/*/libxpmem*.so
+usr/lib/*/pkgconfig/cray-xpmem.pc
