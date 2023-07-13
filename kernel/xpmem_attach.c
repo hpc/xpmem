@@ -527,8 +527,8 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 	xpmem_mmap_write_unlock(current->mm);
 
 	vma->vm_private_data = att;
-	vma->vm_flags |=
-	    VM_DONTCOPY | VM_DONTDUMP | VM_IO | VM_DONTEXPAND | VM_PFNMAP;
+	vm_flags_set(vma,
+		VM_DONTCOPY | VM_DONTDUMP | VM_IO | VM_DONTEXPAND | VM_PFNMAP);
 	vma->vm_ops = &xpmem_vm_ops;
 
 	att->at_vma = vma;
