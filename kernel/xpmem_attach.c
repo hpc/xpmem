@@ -507,7 +507,7 @@ xpmem_attach(struct file *file, xpmem_apid_t apid, off_t offset, size_t size,
 						     vaddr + size);
 		xpmem_mmap_write_unlock(current->mm);
 		for ( ; existing_vma && existing_vma->vm_start < vaddr + size
-				; existing_vma = existing_vma->vm_next) {
+				; existing_vma = find_vma(current->mm, existing_vma->vm_end)) {
 			if (xpmem_is_vm_ops_set(existing_vma)) {
 				ret = -EINVAL;
 				goto out_3;
