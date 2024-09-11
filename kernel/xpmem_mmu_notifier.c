@@ -109,7 +109,7 @@ xpmem_invalidate_range(struct mmu_notifier *mn,
 		return;
 	}
 
-	for ( ; vma && vma->vm_start < end; vma = vma->vm_next) {
+	for ( ; vma && vma->vm_start < end; vma = find_vma(mm, vma->vm_end)) {
 		unsigned long vm_start;
 		unsigned long vm_end;
 
