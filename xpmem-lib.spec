@@ -10,7 +10,7 @@ Version: 0.2
 Release: 0
 License: GPLv2
 Group: System Environment/Libraries
-Packager: Nathan Hjelm
+Packager: HPE
 Source: xpmem-%{version}.tar.bz2
 BuildRoot: %{_tmppath}/%{name}-%{version}-build
 Requires: xpmem-kmod
@@ -18,9 +18,7 @@ Provides: xpmem xpmem-devel
 
 %description
 XPMEM is a Linux kernel module that enables a process to map the
-memory of another process into its virtual address space. Source code
-can be obtained by cloning the Git repository, original Mercurial
-repository or by downloading a tarball from the link above.
+memory of another process into its virtual address space.
 
 %prep
 %setup -n xpmem-%{version}

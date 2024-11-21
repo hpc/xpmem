@@ -1,18 +1,17 @@
 %global debug_package %{nil}
 
-%define intranamespace_name xpmem
+%define intranamespace_name xpmem-dkms
 %define version 2.6.5
 %define source_name %{intranamespace_name}-%{version}
 
 Summary: XPMEM: Cross-partition memory
 Name: %{intranamespace_name}-dkms
 Version: %{version}
-Release: %{uss_rpm_release}
+Release: 0
 License: GPLv2
 Group: System Environment/Kernel
 Packager: HPE
-Source: xpmem-0.2.tar.bz2
-BuildRequires: uss-buildmacros
+Source: xpmem-2.6.5.tar.bz2
 Requires: dkms
 Provides: kmod(xpmem.ko)
 BuildArch: noarch
@@ -27,11 +26,12 @@ repository or by downloading a tarball from the link above.
 %setup -n %{source_name}
 dest_src=/usr/src/%{intranamespace_name}-%{version}-%{release}
 mkdir -p %{buildroot}/$dest_src
-mkdir -p %{buildroot}/etc/udev/rules.d
+mkdir -p %{buildroot}%{_udevrulesdir}
 
 cp -r include %{buildroot}$dest_src
 cp -r kernel %{buildroot}$dest_src
-cp 56-xpmem.rules %{buildroot}/etc/udev/rules.d/56-xpmem.rules
+cp usr/56-xpmem.rules %{buildroot}%{_udevrulesdir}/56-xpmem.rules
+echo "%dir $dest_src" > dkms-files
 echo "$dest_src" >> dkms-files
 
 dkms_conf=%{buildroot}$dest_src/dkms.conf
