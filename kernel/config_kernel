@@ -1,0 +1,151 @@
+#!/bin/sh
+
+usage() {
+	cat <<EOF
+$0: configure kernel
+Usage:
+  $0    # Run configuration
+  $0  CONFIG_NAME   # re-test configuration for CONFIG_NAME
+
+Kernel source is set by setting KSRC, KVERS or taken from uname -r
+EOF
+	
+}
+
+set_ksrc() {
+	KVERS="${KVERS:-`uname -r`}"
+	KSRC=${KSRC:-/lib/modules/$KVERS/build}
+}
+
+set_globals() {
+	set_ksrc # FIXME: command-line arguments?
+	TEST_MODULES_DIR="$PWD/test_mods"
+	TEST_CASES_DIR="$PWD/test_cases"
+	TEST_MOD_NAME="testmod"
+	TEST_RUN_LOG="$TEST_MODULES_DIR/run.log"
+	ERROR_FLAGS="-Werror-implicit-function-declaration -Wno-unused-variable -Wno-uninitialized -Werror=int-conversion -Werror=discarded-qualifiers"
+	HEADER_FILE="xpmem_kernel.h"
+}
+
+msg_checking() {
+	echo -n "Checking $*: "
+}
+
+msg_error() {
+	echo "Error: $*"
+	exit 1
+}
+
+msg_result() {
+	echo "$*"
+}
+
+msg_notice() {
+	echo "$*"
+}
+
+gen_test_case() {
+	local mod_name mod_dir
+
+	mod_name="$1"
+	mod_dir="$TEST_MODULES_DIR/$mod_name"
+	rm -rf "$mod_dir"
+	mkdir -p "$mod_dir"
+	cat <<EOF >"$mod_dir/$TEST_MOD_NAME.c"
+#include <linux/module.h>
+#include <linux/kernel.h>
+MODULE_LICENSE("GPL");
+`cat $TEST_CASES_DIR/$mod_name.init`
+static int __init test_func (void) {
+`cat $TEST_CASES_DIR/$mod_name.main`
+	return 0;
+}
+module_init(test_func);
+EOF
+	echo "obj-m += $TEST_MOD_NAME.o" >"$mod_dir/Makefile"
+	echo "obj-\$(XPMEM_TEST)\$(XPMEM_TEST_$mod_name) += $mod_name/" >>$TEST_MODULES_DIR/Makefile
+}
+
+build_test_modules() {
+	msg_notice "Test-building kernel modules test-builds"
+	make -s -C "$KSRC" -k -j${NJOBS:-1} EXTRA_CFLAGS="$ERROR_FLAGS" "M=$TEST_MODULES_DIR" XPMEM_TEST=m modules 2>"$TEST_RUN_LOG"
+	echo ''
+}
+
+check_test_results() {
+	local mod_dir test_name rc desc
+
+	rm -f "$HEADER_FILE"
+	for mod_dir in $TEST_MODULES_DIR/HAVE_*; do
+		if test ! -d "$mod_dir"; then continue; fi
+		test_name="${mod_dir##*/}"
+		test ! -e "$mod_dir/$TEST_MOD_NAME.o"
+		rc=$?
+		desc_file="$TEST_CASES_DIR/$test_name.desc"
+		if [ -f "$desc_file" ]; then
+			echo "" >>"$HEADER_FILE"
+			echo "// $test_name: `cat $desc_file`" >> "$HEADER_FILE"
+		fi
+		if [ "$rc" = 1 ]; then
+			echo "#define $test_name 1" >>"$HEADER_FILE"
+		else
+			echo "//#undef $test_name" >>"$HEADER_FILE"
+		fi
+		msg_notice "$test_name=$rc"
+		
+		
+
+		#if test "$mlnx_rdma_mod_dir_rc" = 1; then
+		#	AC_DEFINE_UNQUOTED([$mlnx_rdma_mod_dir_name], [$mlnx_rdma_mod_dir_rc])
+		#fi
+	done
+}
+
+check_build_sanity() {
+	local rc
+	msg_checking "that system can build kernel modules"
+	gen_test_case KBUILD_WORKS "building a kernel module works"
+	make -s -C "$KSRC" EXTRA_CFLAGS="$ERROR_FLAGS" "M=$TEST_MODULES_DIR" XPMEM_TEST_KBUILD_WORKS=m modules 2>"$TEST_RUN_LOG"
+	rc=$?
+	if test "$rc" != 0; then
+		echo ''; cat "$TEST_RUN_LOG"
+		msg_error "Failed to build a dummy kernel module. Check compiler, kernel headers, etc."
+	fi
+	msg_result "yes"
+}
+
+get_tested_modules() {
+	ls $TEST_CASES_DIR/HAVE_*.init | sed -r -e 's|.*/(HAVE_)|\1|' -e 's|\.init$||'
+}
+
+create_test_modules() {
+	local mod
+
+	rm -rf "${TEST_MODULES_DIR}"
+	mkdir -p "${TEST_MODULES_DIR}"
+
+	check_build_sanity
+
+	for mod in `get_tested_modules`; do
+		gen_test_case "$mod"
+	done
+}
+
+run_all() {
+	set_globals
+	create_test_modules
+	build_test_modules
+	check_test_results
+}
+
+# re-run a single test, after it was built
+run_test() {
+	set_globals
+	make -C "$KSRC" "M=$TEST_MODULES_DIR" XPMEM_TEST_$1=m modules EXTRA_CFLAGS="$ERROR_FLAGS"
+}
+
+case "$1" in
+HAVE_* | TEST_KBUILD) run_test "$1";;
+'') run_all;;
+*) usage; exit 1;;
+esac
