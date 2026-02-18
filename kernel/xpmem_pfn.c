@@ -45,9 +45,14 @@
 #define pud_is_huge(p) (0)
 #endif
 #elif defined(CONFIG_X86)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0)
 #define pmd_is_huge(p) pmd_large(p)
 #define pud_is_huge(p) pud_large(p)
-#elif defined(CONFIG_PPC)
+#else
+#define pmd_is_huge(p) pmd_leaf(p)
+#define pud_is_huge(p) pud_leaf(p)
+#endif// LINUX_VERSION_CODE
+#elif defined(CONFIG_PPC)//TODO: check symbol change for powerpc
 #define pmd_is_huge(p) pmd_large(p)
 #define pud_is_huge(p) ((pud_val(p) & 0x3) != 0x0)
 #else
